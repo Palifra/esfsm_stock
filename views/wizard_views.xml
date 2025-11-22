@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Return Material Wizard -->
+    <record id="esfsm_return_material_wizard_view_form" model="ir.ui.view">
+        <field name="name">esfsm.return.material.wizard.form</field>
+        <field name="model">esfsm.return.material.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Врати материјали">
+                <sheet>
+                    <group>
+                        <field name="job_id" readonly="1"/>
+                    </group>
+                    <notebook>
+                        <page string="Материјали за враќање">
+                            <field name="line_ids">
+                                <list editable="bottom">
+                                    <field name="product_id" readonly="1"/>
+                                    <field name="product_uom_id" readonly="1" groups="uom.group_uom"/>
+                                    <field name="available_qty" readonly="1"/>
+                                    <field name="return_qty"/>
+                                    <field name="material_line_id" column_invisible="1"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+                <footer>
+                    <button string="Потврди" name="action_confirm" type="object" class="btn-primary"/>
+                    <button string="Откажи" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <!-- Add Material Wizard -->
+    <record id="esfsm_add_material_wizard_view_form" model="ir.ui.view">
+        <field name="name">esfsm.add.material.wizard.form</field>
+        <field name="model">esfsm.add.material.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Додади материјали">
+                <sheet>
+                    <group>
+                        <field name="job_id" readonly="1"/>
+                    </group>
+                    <notebook>
+                        <page string="Материјали за додавање">
+                            <field name="line_ids">
+                                <list editable="bottom">
+                                    <field name="product_id"/>
+                                    <field name="product_uom_id" groups="uom.group_uom"/>
+                                    <field name="qty"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+                <footer>
+                    <button string="Потврди" name="action_confirm" type="object" class="btn-primary"/>
+                    <button string="Откажи" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+</odoo>

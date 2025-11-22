@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Add stock location field to vehicle form -->
+    <record id="fleet_vehicle_view_form_stock" model="ir.ui.view">
+        <field name="name">fleet.vehicle.form.stock</field>
+        <field name="model">fleet.vehicle</field>
+        <field name="inherit_id" ref="fleet.fleet_vehicle_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//page[@name='note']" position="before">
+                <page string="Магацин" name="stock">
+                    <group>
+                        <group>
+                            <field name="stock_location_id" readonly="1"/>
+                        </group>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>

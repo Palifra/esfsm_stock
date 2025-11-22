@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Add FSM job field to picking form -->
+    <record id="stock_picking_view_form_esfsm" model="ir.ui.view">
+        <field name="name">stock.picking.form.esfsm</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="stock.view_picking_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='origin']" position="after">
+                <field name="esfsm_job_id"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Add FSM job filter to picking search -->
+    <record id="stock_picking_view_search_esfsm" model="ir.ui.view">
+        <field name="name">stock.picking.search.esfsm</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="stock.view_picking_internal_search"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='name']" position="after">
+                <field name="esfsm_job_id"/>
+            </xpath>
+            <xpath expr="//filter[@name='late']" position="after">
+                <separator/>
+                <filter string="FSM Jobs" name="fsm_jobs"
+                        domain="[('esfsm_job_id', '!=', False)]"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- List view for material lines -->
+    <record id="esfsm_job_material_view_list" model="ir.ui.view">
+        <field name="name">esfsm.job.material.list</field>
+        <field name="model">esfsm.job.material</field>
+        <field name="arch" type="xml">
+            <list string="Материјали" editable="bottom">
+                <field name="product_id"/>
+                <field name="product_uom_id" groups="uom.group_uom"/>
+                <field name="planned_qty"/>
+                <field name="taken_qty"/>
+                <field name="used_qty"/>
+                <field name="returned_qty"/>
+                <field name="available_to_return_qty"/>
+                <field name="price_unit" widget="monetary"/>
+                <field name="price_subtotal" widget="monetary"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="company_id" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Form view for material lines -->
+    <record id="esfsm_job_material_view_form" model="ir.ui.view">
+        <field name="name">esfsm.job.material.form</field>
+        <field name="model">esfsm.job.material</field>
+        <field name="arch" type="xml">
+            <form string="Материјал">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="job_id"/>
+                            <field name="product_id"/>
+                            <field name="product_uom_id" groups="uom.group_uom"/>
+                            <field name="price_unit" widget="monetary"/>
+                        </group>
+                        <group>
+                            <field name="sequence"/>
+                            <field name="currency_id" invisible="1"/>
+                            <field name="company_id" invisible="1"/>
+                        </group>
+                    </group>
+                    <group string="Количини">
+                        <group>
+                            <field name="planned_qty"/>
+                            <field name="taken_qty"/>
+                        </group>
+                        <group>
+                            <field name="used_qty"/>
+                            <field name="returned_qty"/>
+                            <field name="available_to_return_qty"/>
+                        </group>
+                    </group>
+                    <group>
+                        <field name="price_subtotal" widget="monetary"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Search view for material lines -->
+    <record id="esfsm_job_material_view_search" model="ir.ui.view">
+        <field name="name">esfsm.job.material.search</field>
+        <field name="model">esfsm.job.material</field>
+        <field name="arch" type="xml">
+            <search string="Материјали">
+                <field name="product_id"/>
+                <field name="job_id"/>
+                <group expand="0" string="Групирај по">
+                    <filter string="Производ" name="group_product" context="{'group_by': 'product_id'}"/>
+                    <filter string="Работа" name="group_job" context="{'group_by': 'job_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- Action for material lines -->
+    <record id="esfsm_job_material_action" model="ir.actions.act_window">
+        <field name="name">Материјали</field>
+        <field name="res_model">esfsm.job.material</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Креирајте нова ставка за материјал
+            </p>
+            <p>
+                Овде можете да го следите животниот циклус на материјалите:<br/>
+                • Планирано - Проценета количина<br/>
+                • Земено - Количина земена од магацин<br/>
+                • Искористено - Количина потрошена на работа<br/>
+                • Вратено - Неискористена количина вратена назад
+            </p>
+        </field>
+    </record>
+</odoo>

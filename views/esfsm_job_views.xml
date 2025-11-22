@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Inherit job form to add materials tab and buttons -->
+    <record id="esfsm_job_view_form_stock" model="ir.ui.view">
+        <field name="name">esfsm.job.form.stock</field>
+        <field name="model">esfsm.job</field>
+        <field name="inherit_id" ref="esfsm.esfsm_job_view_form"/>
+        <field name="arch" type="xml">
+            <!-- Add smart button for materials -->
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button class="oe_stat_button" type="object" name="action_view_materials"
+                        icon="fa-cubes" invisible="material_count == 0">
+                    <field string="Материјали" name="material_count" widget="statinfo"/>
+                </button>
+            </xpath>
+
+            <!-- Add material tab in notebook -->
+            <xpath expr="//notebook" position="inside">
+                <page string="Материјали" name="materials">
+                    <field name="material_ids"/>
+                    <group class="oe_subtotal_footer oe_right">
+                        <field name="material_total" widget="monetary"/>
+                        <field name="currency_id" invisible="1"/>
+                    </group>
+                    <div class="oe_clear"/>
+                    <group>
+                        <group>
+                            <button name="action_add_materials" string="Додади материјали" type="object"
+                                    class="oe_highlight" icon="fa-plus"/>
+                            <button name="action_return_materials" string="Врати материјали" type="object"
+                                    class="btn-secondary" icon="fa-undo"/>
+                        </group>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Add material column in list view -->
+    <record id="esfsm_job_view_tree_stock" model="ir.ui.view">
+        <field name="name">esfsm.job.tree.stock</field>
+        <field name="model">esfsm.job</field>
+        <field name="inherit_id" ref="esfsm.esfsm_job_view_tree"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='employee_id']" position="after">
+                <field name="material_count" string="Материјали"/>
+                <field name="material_total" widget="monetary" optional="hide"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Add material search filters -->
+    <record id="esfsm_job_view_search_stock" model="ir.ui.view">
+        <field name="name">esfsm.job.search.stock</field>
+        <field name="model">esfsm.job</field>
+        <field name="inherit_id" ref="esfsm.esfsm_job_view_search"/>
+        <field name="arch" type="xml">
+            <xpath expr="//search" position="inside">
+                <separator/>
+                <filter string="Со материјали" name="has_materials"
+                        domain="[('material_count', '>', 0)]"/>
+                <filter string="Без материјали" name="no_materials"
+                        domain="[('material_count', '=', 0)]"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

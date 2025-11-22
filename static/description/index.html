@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="mk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESFSM - Stock & Fleet Integration</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0 0 10px 0;
+            font-size: 2.5em;
+            font-weight: 700;
+        }
+        .header p {
+            margin: 0;
+            font-size: 1.2em;
+            opacity: 0.95;
+        }
+        .badge {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.2);
+            padding: 5px 15px;
+            border-radius: 20px;
+            margin: 10px 5px 0 5px;
+            font-size: 0.9em;
+        }
+        .section {
+            margin-bottom: 40px;
+        }
+        .section h2 {
+            color: #667eea;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+        }
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .feature-card {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .feature-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .feature-card h3 {
+            color: #667eea;
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1.3em;
+            display: flex;
+            align-items: center;
+        }
+        .feature-card .icon {
+            font-size: 1.5em;
+            margin-right: 10px;
+        }
+        .lifecycle {
+            background: linear-gradient(to right, #e3f2fd, #bbdefb);
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .lifecycle-step {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+            padding: 10px;
+            background: white;
+            border-radius: 5px;
+        }
+        .lifecycle-step .number {
+            background: #667eea;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 15px;
+            font-weight: bold;
+        }
+        .lifecycle-step .arrow {
+            margin: 0 10px;
+            color: #667eea;
+            font-size: 1.5em;
+        }
+        .code-block {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 15px 0;
+            font-family: "Courier New", monospace;
+            font-size: 0.9em;
+            line-height: 1.4;
+        }
+        .code-comment {
+            color: #68d391;
+        }
+        .priority-box {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .priority-box ol {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .priority-box li {
+            margin: 5px 0;
+        }
+        .screenshot {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .screenshot img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .dependencies {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 15px 0;
+        }
+        .dependency {
+            background: #e9ecef;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            border: 2px solid #dee2e6;
+        }
+        .dependency.core {
+            border-color: #667eea;
+            background: #e7eaf8;
+        }
+        .footer {
+            background: #2d3748;
+            color: white;
+            padding: 30px;
+            border-radius: 8px;
+            margin-top: 40px;
+            text-align: center;
+        }
+        .footer a {
+            color: #90cdf4;
+            text-decoration: none;
+        }
+        .footer a:hover {
+            text-decoration: underline;
+        }
+        .alert {
+            background: #d1ecf1;
+            border-left: 4px solid #0c5460;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📦 ESFSM - Stock & Fleet Integration</h1>
+        <p>Comprehensive Material Tracking with Fleet Vehicle Stock Locations</p>
+        <div>
+            <span class="badge">Odoo 18.0</span>
+            <span class="badge">LGPL-3</span>
+            <span class="badge">Production Ready</span>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>🎯 Overview</h2>
+        <p>
+            Extend your ESFSM field service management with powerful material tracking capabilities.
+            This module seamlessly integrates fleet vehicles with Odoo's stock management system,
+            providing real-time material lifecycle tracking from planning to consumption.
+        </p>
+    </div>
+
+    <div class="section">
+        <h2>✨ Key Features</h2>
+        <div class="feature-grid">
+            <div class="feature-card">
+                <h3><span class="icon">🚗</span> Automatic Vehicle Locations</h3>
+                <p>Each fleet vehicle automatically gets its own stock location. No manual setup required!</p>
+            </div>
+            <div class="feature-card">
+                <h3><span class="icon">📊</span> Lifecycle Tracking</h3>
+                <p>Track materials from planning through usage to returns with full audit trail.</p>
+            </div>
+            <div class="feature-card">
+                <h3><span class="icon">🎯</span> Smart Priorities</h3>
+                <p>Intelligent source location detection: team vehicle → technician vehicle → warehouse.</p>
+            </div>
+            <div class="feature-card">
+                <h3><span class="icon">🔄</span> Material Wizards</h3>
+                <p>Easy-to-use wizards for adding materials during jobs and processing returns.</p>
+            </div>
+            <div class="feature-card">
+                <h3><span class="icon">💰</span> Cost Tracking</h3>
+                <p>Real-time material cost calculation with multi-currency support.</p>
+            </div>
+            <div class="feature-card">
+                <h3><span class="icon">🔒</span> Constraint Validation</h3>
+                <p>Built-in validations prevent data errors (e.g., using more than taken).</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>🔄 Material Lifecycle</h2>
+        <div class="lifecycle">
+            <div class="lifecycle-step">
+                <div class="number">1</div>
+                <div>
+                    <strong>Планирано (Planned)</strong><br>
+                    <small>Estimate materials needed for the job</small>
+                </div>
+            </div>
+            <div class="lifecycle-step">
+                <div class="number">2</div>
+                <div>
+                    <strong>Земено (Taken)</strong><br>
+                    <small>Materials picked from warehouse/vehicle</small>
+                </div>
+            </div>
+            <div class="lifecycle-step">
+                <div class="number">3</div>
+                <div>
+                    <strong>Искористено (Used)</strong><br>
+                    <small>Materials consumed on job site</small>
+                </div>
+            </div>
+            <div class="lifecycle-step">
+                <div class="number">4</div>
+                <div>
+                    <strong>Вратено (Returned)</strong><br>
+                    <small>Unused materials returned to warehouse</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>🎯 Location Priority Logic</h2>
+        <div class="priority-box">
+            <strong>Source Location Selection Priority:</strong>
+            <ol>
+                <li><strong>Team Vehicle Location</strong> - Highest priority if job assigned to team with vehicle</li>
+                <li><strong>Technician Vehicle Location</strong> - Second priority if technician has vehicle</li>
+                <li><strong>Warehouse Location</strong> - Default fallback location</li>
+            </ol>
+            <p style="margin-top: 10px;">
+                <em>This ensures materials are always sourced from the most appropriate location automatically!</em>
+            </p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>💻 Usage Example</h2>
+        <div class="code-block">
+<span class="code-comment"># Create job with technician (who has vehicle assigned)</span>
+job = env['esfsm.job'].create({
+    'partner_id': customer.id,
+    'employee_id': technician.id,
+})
+
+<span class="code-comment"># Add material (UoM and price auto-populate!)</span>
+material = env['esfsm.job.material'].create({
+    'job_id': job.id,
+    'product_id': cable.id,
+    'planned_qty': 100.0,  <span class="code-comment"># Estimated</span>
+})
+
+<span class="code-comment"># Update lifecycle</span>
+material.write({'taken_qty': 80.0})   <span class="code-comment"># Picked 80m</span>
+material.write({'used_qty': 65.0})    <span class="code-comment"># Used 65m</span>
+material.write({'returned_qty': 15.0}) <span class="code-comment"># Returned 15m</span>
+
+<span class="code-comment"># Check job summary</span>
+print(job.material_count)  <span class="code-comment"># → 1</span>
+print(job.material_total)  <span class="code-comment"># → 10665.20 MKD</span>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>🧩 Integration & Dependencies</h2>
+        <p>This module integrates seamlessly with core Odoo modules:</p>
+        <div class="dependencies">
+            <div class="dependency core">esfsm (Core FSM)</div>
+            <div class="dependency">stock (Inventory)</div>
+            <div class="dependency">fleet (Vehicle Management)</div>
+            <div class="dependency">hr (Employees)</div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>🛠️ Installation</h2>
+        <div class="alert">
+            <strong>Prerequisites:</strong> Ensure <code>esfsm</code>, <code>stock</code>, and <code>fleet</code> modules are installed first.
+        </div>
+        <p><strong>Standard Installation:</strong></p>
+        <ol>
+            <li>Navigate to <strong>Apps</strong> in Odoo</li>
+            <li>Search for "ESFSM Stock"</li>
+            <li>Click <strong>Install</strong></li>
+        </ol>
+
+        <p><strong>Docker Production:</strong></p>
+        <div class="code-block">
+<span class="code-comment"># Fix file permissions</span>
+chmod -R 755 /path/to/esfsm_stock/
+find /path/to/esfsm_stock/ -type f -exec chmod 644 {} \;
+
+<span class="code-comment"># Install via shell</span>
+docker exec odoo_server odoo shell -d your_db --no-http
+>>> env['ir.module.module'].update_list()
+>>> module = env['ir.module.module'].search([('name', '=', 'esfsm_stock')])
+>>> module.button_immediate_install()
+>>> env.cr.commit()
+
+<span class="code-comment"># Restart container</span>
+docker restart odoo_server
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>✅ Testing</h2>
+        <p>Comprehensive test suite with 30+ test cases covering:</p>
+        <ul>
+            <li>Material lifecycle tracking and constraints</li>
+            <li>Automatic vehicle stock location creation</li>
+            <li>Location priority logic</li>
+            <li>Add and return material wizards</li>
+            <li>Job material aggregation</li>
+        </ul>
+        <div class="code-block">
+<span class="code-comment"># Run all tests</span>
+docker exec odoo_server odoo -d your_db -u esfsm_stock \
+    --test-enable --test-tags=/esfsm_stock --stop-after-init --workers=0
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>🔒 Security</h2>
+        <p>Access control through two user groups:</p>
+        <ul>
+            <li><strong>FSM User</strong> - Create, read, update materials and wizards</li>
+            <li><strong>FSM Manager</strong> - Full access including delete operations</li>
+        </ul>
+        <p>Proper record rules ensure users only see materials for jobs they're assigned to.</p>
+    </div>
+
+    <div class="section">
+        <h2>🚀 Roadmap</h2>
+        <ul>
+            <li>Complete stock picking generation workflow</li>
+            <li>Real-time inventory integration with <code>stock.quant</code></li>
+            <li>Barcode scanning for material picking</li>
+            <li>Mobile app integration</li>
+            <li>Advanced material usage analytics and reporting</li>
+        </ul>
+    </div>
+
+    <div class="footer">
+        <h3>ESKON Engineering</h3>
+        <p>
+            This module is developed and maintained by<br>
+            <strong>ЕСКОН-ИНЖЕНЕРИНГ ДООЕЛ Струмица</strong>
+        </p>
+        <p style="margin-top: 20px;">
+            <a href="https://www.eskon.com.mk">www.eskon.com.mk</a> •
+            <a href="mailto:info@eskon.com.mk">info@eskon.com.mk</a> •
+            <a href="https://github.com/Palifra">GitHub</a>
+        </p>
+        <p style="margin-top: 20px; font-size: 0.9em; opacity: 0.8;">
+            Version 18.0.1.0.0 | License: LGPL-3 | Last Updated: 2025-11-22
+        </p>
+    </div>
+</body>
+</html>

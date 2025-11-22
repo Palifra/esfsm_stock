@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Add vehicle field to team form -->
+    <record id="esfsm_team_view_form_stock" model="ir.ui.view">
+        <field name="name">esfsm.team.form.stock</field>
+        <field name="model">esfsm.team</field>
+        <field name="inherit_id" ref="esfsm.esfsm_team_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='member_ids']" position="before">
+                <group string="Возило">
+                    <field name="vehicle_id"/>
+                    <field name="stock_location_id" readonly="1"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+</odoo>

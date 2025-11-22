@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+        <!-- Parent Stock Location for All Vehicles -->
+        <record id="stock_location_vehicles" model="stock.location">
+            <field name="name">Возила</field>
+            <field name="usage">internal</field>
+            <field name="location_id" ref="stock.stock_location_stock"/>
+        </record>
+    </data>
+</odoo>

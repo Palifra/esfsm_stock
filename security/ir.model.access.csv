@@ -1,0 +1,11 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_esfsm_job_material_user,esfsm.job.material user,model_esfsm_job_material,esfsm.group_esfsm_user,1,1,1,0
+access_esfsm_job_material_manager,esfsm.job.material manager,model_esfsm_job_material,esfsm.group_esfsm_manager,1,1,1,1
+access_esfsm_return_material_wizard_user,esfsm.return.material.wizard user,model_esfsm_return_material_wizard,esfsm.group_esfsm_user,1,1,1,1
+access_esfsm_return_material_wizard_manager,esfsm.return.material.wizard manager,model_esfsm_return_material_wizard,esfsm.group_esfsm_manager,1,1,1,1
+access_esfsm_return_material_wizard_line_user,esfsm.return.material.wizard.line user,model_esfsm_return_material_wizard_line,esfsm.group_esfsm_user,1,1,1,1
+access_esfsm_return_material_wizard_line_manager,esfsm.return.material.wizard.line manager,model_esfsm_return_material_wizard_line,esfsm.group_esfsm_manager,1,1,1,1
+access_esfsm_add_material_wizard_user,esfsm.add.material.wizard user,model_esfsm_add_material_wizard,esfsm.group_esfsm_user,1,1,1,1
+access_esfsm_add_material_wizard_manager,esfsm.add.material.wizard manager,model_esfsm_add_material_wizard,esfsm.group_esfsm_manager,1,1,1,1
+access_esfsm_add_material_wizard_line_user,esfsm.add.material.wizard.line user,model_esfsm_add_material_wizard_line,esfsm.group_esfsm_user,1,1,1,1
+access_esfsm_add_material_wizard_line_manager,esfsm.add.material.wizard.line manager,model_esfsm_add_material_wizard_line,esfsm.group_esfsm_manager,1,1,1,1
