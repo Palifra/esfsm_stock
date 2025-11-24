@@ -256,7 +256,7 @@ class TestLocationPriorityLogic(TestEsfsmStock):
         """Test technician vehicle location is second priority"""
         # Assign vehicle to employee
         self.employee.write({'vehicle_id': self.vehicle.id})
-        self.job.write({'employee_id': self.employee.id})
+        self.job.write({'employee_ids': [(6, 0, [self.employee.id])]})
 
         source_location = self.job._get_source_location()
         self.assertEqual(source_location, self.vehicle.stock_location_id)
