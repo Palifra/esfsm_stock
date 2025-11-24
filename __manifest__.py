@@ -45,6 +45,7 @@ Technical Details
         'esfsm',
         'stock',
         'fleet',
+        'l10n_mk_reverse',
     ],
     'data': [
         # Security

@@ -47,8 +47,9 @@ class EsfsmJob(models.Model):
         """
         Determine source location for materials with priority logic:
         1. Team vehicle location (if job assigned to team)
-        2. Technician vehicle location (if job assigned to individual employee)
-        3. Default warehouse location (fallback)
+        2. FIRST employee location (if job assigned to multiple employees)
+        3. Field technicians location (for technicians without vehicle)
+        4. Default warehouse location (ultimate fallback)
 
         Returns:
             stock.location recordset
@@ -59,11 +60,20 @@ class EsfsmJob(models.Model):
         if self.team_id and self.team_id.stock_location_id:
             return self.team_id.stock_location_id
 
-        # Priority 2: Technician vehicle location
-        if self.employee_id and self.employee_id.vehicle_id and self.employee_id.vehicle_id.stock_location_id:
-            return self.employee_id.vehicle_id.stock_location_id
+        # Priority 2: FIRST employee's stock location
+        if self.employee_ids:
+            first_employee = self.employee_ids[0]
+            if first_employee.stock_location_id:
+                return first_employee.stock_location_id
 
-        # Priority 3: Default warehouse stock location
+        # Priority 3: Field technicians location (for technicians without vehicle)
+        # This prevents materials from staying in main warehouse
+        if self.employee_ids:
+            field_tech_location = self.env.ref('esfsm_stock.stock_location_field_technicians', raise_if_not_found=False)
+            if field_tech_location:
+                return field_tech_location
+
+        # Priority 4: Default warehouse stock location (ultimate fallback)
         warehouse = self.env['stock.warehouse'].search([
             ('company_id', '=', self.company_id.id)
         ], limit=1)
