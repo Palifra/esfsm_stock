@@ -42,7 +42,7 @@
         <field name="model">esfsm.job</field>
         <field name="inherit_id" ref="esfsm.esfsm_job_view_tree"/>
         <field name="arch" type="xml">
-            <xpath expr="//field[@name='employee_id']" position="after">
+            <xpath expr="//field[@name='employee_ids']" position="after">
                 <field name="material_count" string="Материјали"/>
                 <field name="material_total" widget="monetary" optional="hide"/>
             </xpath>
