@@ -14,8 +14,8 @@
                 </button>
             </xpath>
 
-            <!-- Add material tab in notebook -->
-            <xpath expr="//notebook" position="inside">
+            <!-- Add material tab in notebook (before signatures) -->
+            <xpath expr="//page[@name='signatures']" position="before">
                 <page string="Материјали" name="materials">
                     <field name="material_ids"/>
                     <group class="oe_subtotal_footer oe_right">
