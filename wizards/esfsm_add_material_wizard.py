@@ -35,7 +35,7 @@ class EsfsmAddMaterialWizard(models.TransientModel):
         return res
 
     def action_confirm(self):
-        """Create material lines and supply picking"""
+        """Create material lines and supply picking using Реверс type"""
         self.ensure_one()
 
         if not self.line_ids:
@@ -43,22 +43,33 @@ class EsfsmAddMaterialWizard(models.TransientModel):
 
         job = self.job_id
 
-        # Get source (warehouse) and destination (vehicle) locations
-        source_location = self.env.ref('stock.stock_location_stock')  # Warehouse
-        dest_location = job._get_source_location()  # Vehicle location
+        # Get first technician name for the document
+        technician_name = job.employee_ids[0].name if job.employee_ids else 'Непознат'
 
-        # Create picking for supply
+        # Find "Реверс" picking type (materials issued to employee)
         picking_type = self.env['stock.picking.type'].search([
-            ('code', '=', 'internal'),
+            ('name', '=', 'Реверс'),
             ('company_id', '=', job.company_id.id)
         ], limit=1)
 
+        # Fallback to generic internal if Реверс not found
+        if not picking_type:
+            picking_type = self.env['stock.picking.type'].search([
+                ('code', '=', 'internal'),
+                ('company_id', '=', job.company_id.id)
+            ], limit=1)
+
+        # Get source from picking type defaults, destination from job
+        source_location = picking_type.default_location_src_id or self.env.ref('stock.stock_location_stock')
+        dest_location = job._get_source_location()
+
+        # Create picking with Реверс type and technician name
         picking = self.env['stock.picking'].create({
             'picking_type_id': picking_type.id,
             'location_id': source_location.id,
             'location_dest_id': dest_location.id,
             'esfsm_job_id': job.id,
-            'origin': f"{job.name} - Дополнителни материјали",
+            'origin': f"{job.name} - Реверс - {technician_name}",
         })
 
         # Create material lines and stock moves
@@ -96,9 +107,10 @@ class EsfsmAddMaterialWizard(models.TransientModel):
                 'location_dest_id': dest_location.id,
             })
 
-        # Post message to job chatter
+        # Post message to job chatter with technician name
+        technician_name = job.employee_ids[0].name if job.employee_ids else 'Непознат'
         job.message_post(
-            body=_('Додадени %d дополнителни материјали преку picking %s') % (len(self.line_ids), picking.name)
+            body=_('Реверс издаден на %s: %d материјали - %s') % (technician_name, len(self.line_ids), picking.name)
         )
 
         # Return action to view created picking

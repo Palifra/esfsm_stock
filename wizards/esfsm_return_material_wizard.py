@@ -56,7 +56,7 @@ class EsfsmReturnMaterialWizard(models.TransientModel):
         return res
 
     def action_confirm(self):
-        """Create return picking and update material lines"""
+        """Create return picking using Враќање на Реверс type"""
         self.ensure_one()
 
         if not self.line_ids:
@@ -64,22 +64,33 @@ class EsfsmReturnMaterialWizard(models.TransientModel):
 
         job = self.job_id
 
-        # Get source and destination locations
-        source_location = job._get_source_location()  # Vehicle location
-        dest_location = self.env.ref('stock.stock_location_stock')  # Warehouse
+        # Get first technician name for the document
+        technician_name = job.employee_ids[0].name if job.employee_ids else 'Непознат'
 
-        # Create picking for return
+        # Find "Враќање на Реверс" picking type (materials returned from employee)
         picking_type = self.env['stock.picking.type'].search([
-            ('code', '=', 'internal'),
+            ('name', '=', 'Враќање на Реверс'),
             ('company_id', '=', job.company_id.id)
         ], limit=1)
 
+        # Fallback to generic internal if not found
+        if not picking_type:
+            picking_type = self.env['stock.picking.type'].search([
+                ('code', '=', 'internal'),
+                ('company_id', '=', job.company_id.id)
+            ], limit=1)
+
+        # Get source (technician) and destination (warehouse) locations
+        source_location = job._get_source_location()  # Technician/vehicle location
+        dest_location = picking_type.default_location_dest_id or self.env.ref('stock.stock_location_stock')
+
+        # Create picking with Враќање на Реверс type and technician name
         picking = self.env['stock.picking'].create({
             'picking_type_id': picking_type.id,
             'location_id': source_location.id,
             'location_dest_id': dest_location.id,
             'esfsm_job_id': job.id,
-            'origin': f"{job.name} - Враќање материјали",
+            'origin': f"{job.name} - Повратница - {technician_name}",
         })
 
         # Create stock moves for each line
@@ -100,9 +111,10 @@ class EsfsmReturnMaterialWizard(models.TransientModel):
             # Update material line returned_qty
             line.material_line_id.returned_qty += line.return_qty
 
-        # Post message to job chatter
+        # Post message to job chatter with technician name
+        technician_name = job.employee_ids[0].name if job.employee_ids else 'Непознат'
         job.message_post(
-            body=_('Вратени %d материјали преку picking %s') % (len(self.line_ids), picking.name)
+            body=_('Повратница од %s: %d материјали - %s') % (technician_name, len(self.line_ids), picking.name)
         )
 
         # Return action to view created picking

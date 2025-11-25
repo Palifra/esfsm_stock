@@ -178,7 +178,8 @@ class EsfsmJobMaterial(models.Model):
 
     def _create_material_picking(self, quantity):
         """
-        Create stock picking for material take (warehouse → vehicle/customer).
+        Create stock picking for material take (warehouse → technician).
+        Uses "Реверс" picking type with technician name.
 
         Args:
             quantity (float): Quantity to transfer
@@ -187,22 +188,33 @@ class EsfsmJobMaterial(models.Model):
 
         job = self.job_id
 
-        # Get source (warehouse) and destination (vehicle) locations
-        source_location = self.env.ref('stock.stock_location_stock')  # Warehouse
-        dest_location = job._get_source_location()  # Vehicle or warehouse location
+        # Get first technician name for the document
+        technician_name = job.employee_ids[0].name if job.employee_ids else 'Непознат'
 
-        # Find or create internal picking type
+        # Find "Реверс" picking type (materials issued to employee)
         picking_type = self.env['stock.picking.type'].search([
-            ('code', '=', 'internal'),
+            ('name', '=', 'Реверс'),
             ('company_id', '=', job.company_id.id)
         ], limit=1)
 
-        # Create picking
+        # Fallback to generic internal if Реверс not found
+        if not picking_type:
+            picking_type = self.env['stock.picking.type'].search([
+                ('code', '=', 'internal'),
+                ('company_id', '=', job.company_id.id)
+            ], limit=1)
+
+        # Get source and destination from picking type defaults, or use job locations
+        source_location = picking_type.default_location_src_id or self.env.ref('stock.stock_location_stock')
+        dest_location = job._get_source_location()
+
+        # Create picking with job link and technician name
         picking = self.env['stock.picking'].create({
             'picking_type_id': picking_type.id,
             'location_id': source_location.id,
             'location_dest_id': dest_location.id,
-            'origin': f"{job.name} - Задолжување материјал",
+            'esfsm_job_id': job.id,
+            'origin': f"{job.name} - Реверс - {technician_name}",
         })
 
         # Create stock move
@@ -227,12 +239,15 @@ class EsfsmJobMaterial(models.Model):
 
         picking.button_validate()
 
-        # Log in job chatter
+        # Log in job chatter with technician name
+        technician_name = job.employee_ids[0].name if job.employee_ids else 'Непознат'
         job.message_post(
-            body=_('Материјал задолжен: %s %s (%s)') % (
+            body=_('Реверс издаден на %s: %s %s (%s) - %s') % (
+                technician_name,
                 quantity,
                 self.product_uom_id.name,
-                self.product_id.name
+                self.product_id.name,
+                picking.name
             )
         )
 
@@ -240,7 +255,8 @@ class EsfsmJobMaterial(models.Model):
 
     def _create_consumption_move(self, quantity):
         """
-        Create stock consumption move (vehicle → customer/production).
+        Create stock consumption move (technician → customer).
+        Uses "Испратници" picking type.
 
         Args:
             quantity (float): Quantity to consume
@@ -249,22 +265,27 @@ class EsfsmJobMaterial(models.Model):
 
         job = self.job_id
 
-        # Get source (vehicle) and destination (customer) locations
-        source_location = job._get_source_location()  # Vehicle location
+        # Get first technician name for the document
+        technician_name = job.employee_ids[0].name if job.employee_ids else 'Непознат'
+
+        # Get source (vehicle/technician) and destination (customer) locations
+        source_location = job._get_source_location()  # Vehicle/technician location
         dest_location = self.env.ref('stock.stock_location_customers')  # Customer/consumption
 
-        # Find outgoing picking type
+        # Find outgoing picking type (Испратници)
         picking_type = self.env['stock.picking.type'].search([
             ('code', '=', 'outgoing'),
             ('company_id', '=', job.company_id.id)
         ], limit=1)
 
-        # Create picking for consumption
+        # Create picking for consumption with job link
         picking = self.env['stock.picking'].create({
             'picking_type_id': picking_type.id,
             'location_id': source_location.id,
             'location_dest_id': dest_location.id,
-            'origin': f"{job.name} - Потрошување материјал",
+            'esfsm_job_id': job.id,
+            'partner_id': job.partner_id.id,
+            'origin': f"{job.name} - Испратница - {technician_name}",
         })
 
         # Create stock move
@@ -289,12 +310,16 @@ class EsfsmJobMaterial(models.Model):
 
         picking.button_validate()
 
-        # Log in job chatter
+        # Log in job chatter with technician and customer info
+        technician_name = job.employee_ids[0].name if job.employee_ids else 'Непознат'
         job.message_post(
-            body=_('Материјал искористен: %s %s (%s)') % (
+            body=_('Испратница од %s кон %s: %s %s (%s) - %s') % (
+                technician_name,
+                job.partner_id.name,
                 quantity,
                 self.product_uom_id.name,
-                self.product_id.name
+                self.product_id.name,
+                picking.name
             )
         )
 
