@@ -147,3 +147,155 @@ class EsfsmJobMaterial(models.Model):
                     raise ValidationError(_(
                         'Вратената количина (%s) не може да биде поголема од достапната (%s) за %s'
                     ) % (line.returned_qty, available, line.product_id.name))
+
+    def write(self, vals):
+        """
+        Auto-create stock picking when taken_qty is increased.
+        Auto-create stock consumption when used_qty is increased.
+        """
+        for line in self:
+            # Check if taken_qty is being increased
+            if 'taken_qty' in vals:
+                old_taken_qty = line.taken_qty
+                new_taken_qty = vals['taken_qty']
+
+                if new_taken_qty > old_taken_qty:
+                    # Create picking for the delta quantity
+                    qty_delta = new_taken_qty - old_taken_qty
+                    line._create_material_picking(qty_delta)
+
+            # Check if used_qty is being increased
+            if 'used_qty' in vals:
+                old_used_qty = line.used_qty
+                new_used_qty = vals['used_qty']
+
+                if new_used_qty > old_used_qty:
+                    # Create consumption move for the delta quantity
+                    qty_delta = new_used_qty - old_used_qty
+                    line._create_consumption_move(qty_delta)
+
+        return super().write(vals)
+
+    def _create_material_picking(self, quantity):
+        """
+        Create stock picking for material take (warehouse → vehicle/customer).
+
+        Args:
+            quantity (float): Quantity to transfer
+        """
+        self.ensure_one()
+
+        job = self.job_id
+
+        # Get source (warehouse) and destination (vehicle) locations
+        source_location = self.env.ref('stock.stock_location_stock')  # Warehouse
+        dest_location = job._get_source_location()  # Vehicle or warehouse location
+
+        # Find or create internal picking type
+        picking_type = self.env['stock.picking.type'].search([
+            ('code', '=', 'internal'),
+            ('company_id', '=', job.company_id.id)
+        ], limit=1)
+
+        # Create picking
+        picking = self.env['stock.picking'].create({
+            'picking_type_id': picking_type.id,
+            'location_id': source_location.id,
+            'location_dest_id': dest_location.id,
+            'origin': f"{job.name} - Задолжување материјал",
+        })
+
+        # Create stock move
+        self.env['stock.move'].create({
+            'name': f"{job.name} - {self.product_id.name}",
+            'product_id': self.product_id.id,
+            'product_uom_qty': quantity,
+            'product_uom': self.product_uom_id.id,
+            'picking_id': picking.id,
+            'location_id': source_location.id,
+            'location_dest_id': dest_location.id,
+        })
+
+        # Auto-validate the picking
+        picking.action_confirm()
+        picking.action_assign()
+
+        # Set quantities done
+        # Use move.quantity instead of move_line for more reliable quantity setting
+        for move in picking.move_ids:
+            move.quantity = move.product_uom_qty
+
+        picking.button_validate()
+
+        # Log in job chatter
+        job.message_post(
+            body=_('Материјал задолжен: %s %s (%s)') % (
+                quantity,
+                self.product_uom_id.name,
+                self.product_id.name
+            )
+        )
+
+        return picking
+
+    def _create_consumption_move(self, quantity):
+        """
+        Create stock consumption move (vehicle → customer/production).
+
+        Args:
+            quantity (float): Quantity to consume
+        """
+        self.ensure_one()
+
+        job = self.job_id
+
+        # Get source (vehicle) and destination (customer) locations
+        source_location = job._get_source_location()  # Vehicle location
+        dest_location = self.env.ref('stock.stock_location_customers')  # Customer/consumption
+
+        # Find outgoing picking type
+        picking_type = self.env['stock.picking.type'].search([
+            ('code', '=', 'outgoing'),
+            ('company_id', '=', job.company_id.id)
+        ], limit=1)
+
+        # Create picking for consumption
+        picking = self.env['stock.picking'].create({
+            'picking_type_id': picking_type.id,
+            'location_id': source_location.id,
+            'location_dest_id': dest_location.id,
+            'origin': f"{job.name} - Потрошување материјал",
+        })
+
+        # Create stock move
+        self.env['stock.move'].create({
+            'name': f"{job.name} - {self.product_id.name}",
+            'product_id': self.product_id.id,
+            'product_uom_qty': quantity,
+            'product_uom': self.product_uom_id.id,
+            'picking_id': picking.id,
+            'location_id': source_location.id,
+            'location_dest_id': dest_location.id,
+        })
+
+        # Auto-validate the picking
+        picking.action_confirm()
+        picking.action_assign()
+
+        # Set quantities done
+        # Use move.quantity instead of move_line for more reliable quantity setting
+        for move in picking.move_ids:
+            move.quantity = move.product_uom_qty
+
+        picking.button_validate()
+
+        # Log in job chatter
+        job.message_post(
+            body=_('Материјал искористен: %s %s (%s)') % (
+                quantity,
+                self.product_uom_id.name,
+                self.product_id.name
+            )
+        )
+
+        return picking
