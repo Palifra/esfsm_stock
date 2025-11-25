@@ -102,7 +102,7 @@ class EsfsmJob(models.Model):
             'name': _('Материјали'),
             'type': 'ir.actions.act_window',
             'res_model': 'esfsm.job.material',
-            'view_mode': 'tree,form',
+            'view_mode': 'list,form',
             'domain': [('job_id', '=', self.id)],
             'context': {'default_job_id': self.id},
         }
