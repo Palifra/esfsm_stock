@@ -17,6 +17,10 @@
                 <field name="price_subtotal" widget="monetary"/>
                 <field name="currency_id" column_invisible="1"/>
                 <field name="company_id" column_invisible="1"/>
+                <button name="action_take_material" type="object" string="Превземи"
+                        class="btn-link" icon="fa-download"
+                        invisible="planned_qty == 0 or taken_qty >= planned_qty"
+                        title="Превземи планирана количина"/>
             </list>
         </field>
     </record>

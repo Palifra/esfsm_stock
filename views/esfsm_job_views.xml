@@ -27,6 +27,8 @@
                         <group>
                             <button name="action_add_materials" string="Додади материјали" type="object"
                                     class="oe_highlight" icon="fa-plus"/>
+                            <button name="action_take_all_materials" string="Превземи материјали" type="object"
+                                    class="btn-primary" icon="fa-download"/>
                             <button name="action_return_materials" string="Врати материјали" type="object"
                                     class="btn-secondary" icon="fa-undo"/>
                         </group>

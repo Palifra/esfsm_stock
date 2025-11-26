@@ -127,6 +127,29 @@ class EsfsmJobMaterial(models.Model):
                     vals['price_unit'] = product.standard_price
         return super().create(vals_list)
 
+    def action_take_material(self):
+        """Button action to take planned material (create Реверс)"""
+        self.ensure_one()
+        if self.planned_qty <= 0:
+            raise ValidationError(_('Нема планирана количина за превземање.'))
+
+        # Calculate how much to take (planned minus already taken)
+        qty_to_take = self.planned_qty - self.taken_qty
+        if qty_to_take <= 0:
+            raise ValidationError(_('Целата планирана количина е веќе превземена.'))
+
+        # Update taken_qty - this triggers _create_material_picking via write()
+        self.taken_qty = self.planned_qty
+        return True
+
+    def action_take_all_materials(self):
+        """Button action on job to take all planned materials"""
+        for line in self:
+            if line.planned_qty > line.taken_qty:
+                qty_to_take = line.planned_qty - line.taken_qty
+                line.taken_qty = line.planned_qty
+        return True
+
     @api.constrains('used_qty', 'taken_qty')
     def _check_used_quantity(self):
         """Validate that used quantity doesn't exceed taken quantity"""

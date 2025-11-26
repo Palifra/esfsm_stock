@@ -130,3 +130,36 @@ class EsfsmJob(models.Model):
             'target': 'new',
             'context': {'default_job_id': self.id},
         }
+
+    def action_take_all_materials(self):
+        """Take all planned materials (create Реверс for each)"""
+        self.ensure_one()
+        materials_to_take = self.material_ids.filtered(
+            lambda m: m.planned_qty > m.taken_qty
+        )
+        if not materials_to_take:
+            return {
+                'type': 'ir.actions.client',
+                'tag': 'display_notification',
+                'params': {
+                    'title': _('Информација'),
+                    'message': _('Нема материјали за превземање.'),
+                    'type': 'warning',
+                    'sticky': False,
+                }
+            }
+
+        # Take all materials - this triggers _create_material_picking via write()
+        for material in materials_to_take:
+            material.taken_qty = material.planned_qty
+
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': _('Успешно'),
+                'message': _('Превземени %d материјали. Реверси се креирани.') % len(materials_to_take),
+                'type': 'success',
+                'sticky': False,
+            }
+        }
