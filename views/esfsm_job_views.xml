@@ -23,12 +23,14 @@
                         <field name="currency_id" invisible="1"/>
                     </group>
                     <div class="oe_clear"/>
+                    <field name="has_materials_to_take" invisible="1"/>
                     <group>
                         <group>
                             <button name="action_add_materials" string="Додади материјали" type="object"
                                     class="oe_highlight" icon="fa-plus"/>
                             <button name="action_take_all_materials" string="Превземи материјали" type="object"
-                                    class="btn-primary" icon="fa-download"/>
+                                    class="btn-primary" icon="fa-download"
+                                    invisible="not has_materials_to_take"/>
                             <button name="action_return_materials" string="Врати материјали" type="object"
                                     class="btn-secondary" icon="fa-undo"/>
                         </group>

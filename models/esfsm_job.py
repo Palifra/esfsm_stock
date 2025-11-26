@@ -19,6 +19,11 @@ class EsfsmJob(models.Model):
         store=True,
         help='Вкупен број на материјални ставки'
     )
+    has_materials_to_take = fields.Boolean(
+        string='Има материјали за превземање',
+        compute='_compute_has_materials_to_take',
+        help='Дали има материјали со планирана количина поголема од земената'
+    )
     material_total = fields.Monetary(
         string='Вкупна вредност на материјали',
         compute='_compute_material_total',
@@ -36,6 +41,14 @@ class EsfsmJob(models.Model):
         """Count material lines"""
         for job in self:
             job.material_count = len(job.material_ids)
+
+    @api.depends('material_ids.planned_qty', 'material_ids.taken_qty')
+    def _compute_has_materials_to_take(self):
+        """Check if there are materials with planned_qty > taken_qty"""
+        for job in self:
+            job.has_materials_to_take = any(
+                m.planned_qty > m.taken_qty for m in job.material_ids
+            )
 
     @api.depends('material_ids.price_subtotal')
     def _compute_material_total(self):
