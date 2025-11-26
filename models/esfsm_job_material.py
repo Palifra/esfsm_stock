@@ -188,8 +188,12 @@ class EsfsmJobMaterial(models.Model):
 
         job = self.job_id
 
-        # Get first technician name for the document
-        technician_name = job.employee_ids[0].name if job.employee_ids else 'Непознат'
+        # Get responsible technician name (or first assigned, or 'Unknown')
+        technician_name = (
+            job.material_responsible_id.name if job.material_responsible_id
+            else job.employee_ids[0].name if job.employee_ids
+            else 'Непознат'
+        )
 
         # Find "Реверс" picking type (materials issued to employee)
         picking_type = self.env['stock.picking.type'].search([
@@ -239,8 +243,7 @@ class EsfsmJobMaterial(models.Model):
 
         picking.button_validate()
 
-        # Log in job chatter with technician name
-        technician_name = job.employee_ids[0].name if job.employee_ids else 'Непознат'
+        # Log in job chatter
         job.message_post(
             body=_('Реверс издаден на %s: %s %s (%s) - %s') % (
                 technician_name,
@@ -265,8 +268,12 @@ class EsfsmJobMaterial(models.Model):
 
         job = self.job_id
 
-        # Get first technician name for the document
-        technician_name = job.employee_ids[0].name if job.employee_ids else 'Непознат'
+        # Get responsible technician name (or first assigned, or 'Unknown')
+        technician_name = (
+            job.material_responsible_id.name if job.material_responsible_id
+            else job.employee_ids[0].name if job.employee_ids
+            else 'Непознат'
+        )
 
         # Get source (vehicle/technician) and destination (customer) locations
         source_location = job._get_source_location()  # Vehicle/technician location
@@ -310,8 +317,7 @@ class EsfsmJobMaterial(models.Model):
 
         picking.button_validate()
 
-        # Log in job chatter with technician and customer info
-        technician_name = job.employee_ids[0].name if job.employee_ids else 'Непознат'
+        # Log in job chatter
         job.message_post(
             body=_('Испратница од %s кон %s: %s %s (%s) - %s') % (
                 technician_name,

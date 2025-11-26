@@ -43,8 +43,12 @@ class EsfsmAddMaterialWizard(models.TransientModel):
 
         job = self.job_id
 
-        # Get first technician name for the document
-        technician_name = job.employee_ids[0].name if job.employee_ids else 'Непознат'
+        # Get responsible technician name (or first assigned, or 'Unknown')
+        technician_name = (
+            job.material_responsible_id.name if job.material_responsible_id
+            else job.employee_ids[0].name if job.employee_ids
+            else 'Непознат'
+        )
 
         # Find "Реверс" picking type (materials issued to employee)
         picking_type = self.env['stock.picking.type'].search([
@@ -107,8 +111,7 @@ class EsfsmAddMaterialWizard(models.TransientModel):
                 'location_dest_id': dest_location.id,
             })
 
-        # Post message to job chatter with technician name
-        technician_name = job.employee_ids[0].name if job.employee_ids else 'Непознат'
+        # Post message to job chatter
         job.message_post(
             body=_('Реверс издаден на %s: %d материјали - %s') % (technician_name, len(self.line_ids), picking.name)
         )
