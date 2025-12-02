@@ -82,15 +82,21 @@ class EsfsmAddMaterialWizard(models.TransientModel):
                 continue
 
             # Create or update material line on job
-            existing_material = job.material_ids.filtered(
-                lambda m: m.product_id == line.product_id
-            )
+            # For lot-tracked products, match by product AND lot
+            if line.lot_id:
+                existing_material = job.material_ids.filtered(
+                    lambda m: m.product_id == line.product_id and m.lot_id == line.lot_id
+                )
+            else:
+                existing_material = job.material_ids.filtered(
+                    lambda m: m.product_id == line.product_id and not m.lot_id
+                )
 
             if existing_material:
                 # Update existing line - add to taken_qty
                 existing_material[0].taken_qty += line.qty
             else:
-                # Create new material line
+                # Create new material line with lot
                 self.env['esfsm.job.material'].create({
                     'job_id': job.id,
                     'product_id': line.product_id.id,
@@ -98,10 +104,11 @@ class EsfsmAddMaterialWizard(models.TransientModel):
                     'price_unit': line.product_id.standard_price,
                     'planned_qty': line.qty,
                     'taken_qty': line.qty,
+                    'lot_id': line.lot_id.id if line.lot_id else False,
                 })
 
             # Create stock move
-            self.env['stock.move'].create({
+            move = self.env['stock.move'].create({
                 'name': f"{job.name} - {line.product_id.name}",
                 'product_id': line.product_id.id,
                 'product_uom_qty': line.qty,
@@ -110,6 +117,19 @@ class EsfsmAddMaterialWizard(models.TransientModel):
                 'location_id': source_location.id,
                 'location_dest_id': dest_location.id,
             })
+
+            # For lot-tracked products, create move line with lot
+            if line.lot_id:
+                self.env['stock.move.line'].create({
+                    'move_id': move.id,
+                    'product_id': line.product_id.id,
+                    'product_uom_id': line.product_uom_id.id,
+                    'location_id': source_location.id,
+                    'location_dest_id': dest_location.id,
+                    'lot_id': line.lot_id.id,
+                    'quantity': line.qty,
+                    'picking_id': picking.id,
+                })
 
         # Post message to job chatter
         job.message_post(
@@ -153,12 +173,24 @@ class EsfsmAddMaterialWizardLine(models.TransientModel):
         required=True,
         default=1.0
     )
+    lot_id = fields.Many2one(
+        'stock.lot',
+        string='Лот/Сериски број',
+        domain="[('product_id', '=', product_id)]",
+        help='Лот или сериски број за производи со следење'
+    )
+    product_tracking = fields.Selection(
+        related='product_id.tracking',
+        string='Тип на следење',
+        readonly=True
+    )
 
     @api.onchange('product_id')
     def _onchange_product_id(self):
-        """Auto-fill UoM from product"""
+        """Auto-fill UoM from product and clear lot"""
         if self.product_id:
             self.product_uom_id = self.product_id.uom_id
+            self.lot_id = False  # Reset lot when product changes
 
     @api.constrains('qty')
     def _check_qty(self):
@@ -166,3 +198,12 @@ class EsfsmAddMaterialWizardLine(models.TransientModel):
         for line in self:
             if line.qty <= 0:
                 raise ValidationError(_('Количината мора да биде поголема од 0.'))
+
+    @api.constrains('lot_id', 'product_id')
+    def _check_lot_required(self):
+        """Validate lot is provided for tracked products"""
+        for line in self:
+            if line.product_id.tracking != 'none' and not line.lot_id:
+                raise ValidationError(_(
+                    'Лот/Сериски број е задолжителен за производот %s'
+                ) % line.product_id.name)

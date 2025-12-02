@@ -48,6 +48,7 @@ class EsfsmReturnMaterialWizard(models.TransientModel):
                 'material_line_id': material.id,
                 'product_id': material.product_id.id,
                 'product_uom_id': material.product_uom_id.id,
+                'lot_id': material.lot_id.id if material.lot_id else False,
                 'available_qty': material.available_to_return_qty,
                 'return_qty': material.available_to_return_qty,  # Default to full return
             }))
@@ -102,7 +103,7 @@ class EsfsmReturnMaterialWizard(models.TransientModel):
             if line.return_qty <= 0:
                 continue
 
-            self.env['stock.move'].create({
+            move = self.env['stock.move'].create({
                 'name': f"{job.name} - {line.product_id.name}",
                 'product_id': line.product_id.id,
                 'product_uom_qty': line.return_qty,
@@ -111,6 +112,19 @@ class EsfsmReturnMaterialWizard(models.TransientModel):
                 'location_id': source_location.id,
                 'location_dest_id': dest_location.id,
             })
+
+            # For lot-tracked products, create move line with lot
+            if line.lot_id:
+                self.env['stock.move.line'].create({
+                    'move_id': move.id,
+                    'product_id': line.product_id.id,
+                    'product_uom_id': line.product_uom_id.id,
+                    'location_id': source_location.id,
+                    'location_dest_id': dest_location.id,
+                    'lot_id': line.lot_id.id,
+                    'quantity': line.return_qty,
+                    'picking_id': picking.id,
+                })
 
             # Update material line returned_qty
             line.material_line_id.returned_qty += line.return_qty
@@ -157,6 +171,12 @@ class EsfsmReturnMaterialWizardLine(models.TransientModel):
         string='Мерна единица',
         required=True,
         readonly=True
+    )
+    lot_id = fields.Many2one(
+        'stock.lot',
+        string='Лот/Сериски број',
+        readonly=True,
+        help='Лот или сериски број за производи со следење'
     )
     available_qty = fields.Float(
         string='Достапно',

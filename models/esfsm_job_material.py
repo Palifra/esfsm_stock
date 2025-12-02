@@ -97,6 +97,19 @@ class EsfsmJobMaterial(models.Model):
         readonly=True
     )
 
+    # Lot tracking for cable products
+    lot_id = fields.Many2one(
+        'stock.lot',
+        string='Лот/Сериски број',
+        domain="[('product_id', '=', product_id)]",
+        help='Лот или сериски број за производи со следење'
+    )
+    product_tracking = fields.Selection(
+        related='product_id.tracking',
+        string='Тип на следење',
+        readonly=True
+    )
+
     @api.depends('taken_qty', 'used_qty', 'returned_qty')
     def _compute_available_to_return_qty(self):
         """Calculate quantity available to return"""
@@ -259,20 +272,40 @@ class EsfsmJobMaterial(models.Model):
         picking.action_confirm()
         picking.action_assign()
 
-        # Set quantities done
-        # Use move.quantity instead of move_line for more reliable quantity setting
+        # Set quantities done with lot if applicable
         for move in picking.move_ids:
-            move.quantity = move.product_uom_qty
+            if self.lot_id and self.product_id.tracking != 'none':
+                # For lot-tracked products, set lot on move lines
+                for move_line in move.move_line_ids:
+                    move_line.lot_id = self.lot_id
+                    move_line.quantity = move.product_uom_qty
+                # If no move lines exist, create one with lot
+                if not move.move_line_ids:
+                    self.env['stock.move.line'].create({
+                        'move_id': move.id,
+                        'product_id': move.product_id.id,
+                        'product_uom_id': move.product_uom.id,
+                        'location_id': move.location_id.id,
+                        'location_dest_id': move.location_dest_id.id,
+                        'lot_id': self.lot_id.id,
+                        'quantity': move.product_uom_qty,
+                        'picking_id': picking.id,
+                    })
+            else:
+                # Non-lot tracked products
+                move.quantity = move.product_uom_qty
 
         picking.button_validate()
 
-        # Log in job chatter
+        # Log in job chatter with lot info
+        lot_info = f" (Лот: {self.lot_id.name})" if self.lot_id else ""
         job.message_post(
-            body=_('Реверс издаден на %s: %s %s (%s) - %s') % (
+            body=_('Реверс издаден на %s: %s %s (%s)%s - %s') % (
                 technician_name,
                 quantity,
                 self.product_uom_id.name,
                 self.product_id.name,
+                lot_info,
                 picking.name
             )
         )
@@ -333,21 +366,41 @@ class EsfsmJobMaterial(models.Model):
         picking.action_confirm()
         picking.action_assign()
 
-        # Set quantities done
-        # Use move.quantity instead of move_line for more reliable quantity setting
+        # Set quantities done with lot if applicable
         for move in picking.move_ids:
-            move.quantity = move.product_uom_qty
+            if self.lot_id and self.product_id.tracking != 'none':
+                # For lot-tracked products, set lot on move lines
+                for move_line in move.move_line_ids:
+                    move_line.lot_id = self.lot_id
+                    move_line.quantity = move.product_uom_qty
+                # If no move lines exist, create one with lot
+                if not move.move_line_ids:
+                    self.env['stock.move.line'].create({
+                        'move_id': move.id,
+                        'product_id': move.product_id.id,
+                        'product_uom_id': move.product_uom.id,
+                        'location_id': move.location_id.id,
+                        'location_dest_id': move.location_dest_id.id,
+                        'lot_id': self.lot_id.id,
+                        'quantity': move.product_uom_qty,
+                        'picking_id': picking.id,
+                    })
+            else:
+                # Non-lot tracked products
+                move.quantity = move.product_uom_qty
 
         picking.button_validate()
 
-        # Log in job chatter
+        # Log in job chatter with lot info
+        lot_info = f" (Лот: {self.lot_id.name})" if self.lot_id else ""
         job.message_post(
-            body=_('Испратница од %s кон %s: %s %s (%s) - %s') % (
+            body=_('Испратница од %s кон %s: %s %s (%s)%s - %s') % (
                 technician_name,
                 job.partner_id.name,
                 quantity,
                 self.product_uom_id.name,
                 self.product_id.name,
+                lot_info,
                 picking.name
             )
         )
