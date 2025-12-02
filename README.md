@@ -23,10 +23,24 @@ Automatic source location detection with priority:
 2. **Technician Vehicle** (second priority)
 3. **Warehouse** (fallback)
 
-### 🔄 Material Wizards
-- **Add Materials Wizard** - Request additional materials during job execution
-- **Return Materials Wizard** - Return unused materials from job to warehouse
-- Both wizards auto-populate based on job context and available quantities
+### 🔄 Strict Material Workflow (Wizard-Only)
+Materials must follow a controlled 4-step workflow:
+
+```
+ДОДАДИ → ПРЕВЗЕМИ → ПОТРОШИ → ВРАТИ
+(Add)     (Take)     (Consume)  (Return)
+```
+
+**Wizards:**
+- **Add Materials Wizard** - Plan materials needed for the job
+- **Take Materials Wizard** - Pick materials from warehouse (creates Реверс/Stock Issue)
+- **Consume Materials Wizard** - Record actual usage (creates Испратница/Delivery)
+- **Return Materials Wizard** - Return unused materials (creates Повратница/Return)
+
+**Key constraints:**
+- Quantity fields are readonly in views - changes only through wizards
+- Job cannot be completed with unreturned materials
+- All operations create proper stock documents for traceability
 
 ### 📊 Job Material Management
 - Real-time material count and cost tracking on jobs
@@ -89,53 +103,66 @@ Ensure materials have:
 
 ## Usage
 
-### Adding Materials to a Job
+### Complete Material Workflow
 
-#### Method 1: Direct Entry (Form View)
-1. Open job form
-2. Go to **Материјали** (Materials) tab
-3. Add line with product, quantities
-4. UoM and price auto-populate from product
+Materials must go through 4 stages (all via wizards):
 
-#### Method 2: Add Materials Wizard
-1. Click **Додади материјали** (Add Materials) button
-2. Select products and quantities
-3. Confirm → Materials added with `taken_qty` set
+#### Step 1: Add Materials (Planning)
+1. Open job form → **Материјали** (Materials) tab
+2. Click **[Додади]** button
+3. Select products, lots (if tracked), and quantities
+4. Click **[Потврди]**
 
-### Material Lifecycle Example
+**Result:** Materials added with `planned_qty` set
 
-```python
-# Job created with technician assigned
-job = env['esfsm.job'].create({
-    'partner_id': customer.id,
-    'employee_id': technician.id,  # Has vehicle assigned
-})
+#### Step 2: Take Materials (From Warehouse)
+1. Click **[Превземи]** button (visible when materials to take exist)
+2. Wizard shows availability status:
+   - 🟢 Green: Full stock available
+   - 🟡 Yellow: Partial stock
+   - 🔴 Red: No stock
+3. Enter quantities to take
+4. Click **[Превземи]**
 
-# Add material
-material = env['esfsm.job.material'].create({
-    'job_id': job.id,
-    'product_id': cable_product.id,
-    # UoM and price auto-filled!
-    'planned_qty': 100.0,  # Estimated need
-})
+**Result:**
+- Stock document "Реверс" created (Warehouse → Vehicle)
+- `taken_qty` updated
+- Chatter message posted
 
-# During job preparation - material picked from warehouse
-material.write({'taken_qty': 80.0})  # Actually took 80m
+#### Step 3: Consume Materials (At Customer Site)
+1. Click **[Потроши]** button (visible when taken materials exist)
+2. Enter actual consumed quantities
+3. Click **[Потроши]**
 
-# After job completion - record usage
-material.write({'used_qty': 65.0})  # Used 65m on site
+**Result:**
+- Stock document "Испратница" created (Vehicle → Customer)
+- `used_qty` updated
+- Material cost calculated
 
-# Return unused material
-# available_to_return_qty = 15.0 (80 - 65)
-material.write({'returned_qty': 15.0})  # Returned all unused
-```
+#### Step 4: Return Unused Materials
+1. Click **[Врати]** button (visible when unreturned materials exist)
+2. Wizard shows returnable quantities
+3. Enter return quantities
+4. Click **[Потврди]**
 
-### Returning Materials
+**Result:**
+- Stock document "Повратница" created (Vehicle → Warehouse)
+- `returned_qty` updated
+- Inventory restored
 
-1. Click **Врати материјали** (Return Materials) button on job
-2. Wizard pre-populates with returnable materials
-3. Adjust quantities if needed (partial returns allowed)
-4. Confirm → `returned_qty` updated, chatter message posted
+### Job Completion Constraint
+
+⚠️ **IMPORTANT:** A job cannot be completed if:
+- There are taken materials that are neither consumed nor returned
+- Formula must be satisfied: `taken_qty = used_qty + returned_qty`
+
+### Stock Documents Created
+
+| Document | When | From → To |
+|----------|------|-----------|
+| **Реверс** | Take | Warehouse → Vehicle |
+| **Испратница** | Consume | Vehicle → Customer |
+| **Повратница** | Return | Vehicle → Warehouse |
 
 ### Viewing Material Summary
 
@@ -177,15 +204,30 @@ Smart button on job form shows material count and opens filtered list.
 
 #### `esfsm.add.material.wizard`
 - Pre-fills job context
-- Adds new materials or updates existing ones
-- Creates stock picking (Warehouse → Vehicle)
-- Posts chatter message
+- Allows selecting products and lots
+- Creates material lines with `planned_qty`
+- No stock movement (planning only)
+
+#### `esfsm.take.material.wizard`
+- Auto-populates with materials to take (planned_qty > taken_qty)
+- Shows real-time stock availability with color coding
+- Creates "Реверс" picking (Warehouse → Vehicle)
+- Updates `taken_qty` on material lines
+- Supports lot tracking
+
+#### `esfsm.consume.material.wizard`
+- Auto-populates with taken materials
+- Shows available to consume (taken - used - returned)
+- Creates "Испратница" picking (Vehicle → Customer)
+- Updates `used_qty` on material lines
+- Calculates material cost
 
 #### `esfsm.return.material.wizard`
 - Auto-populates with returnable materials
-- Supports partial returns
-- Creates stock picking (Vehicle → Warehouse)
+- Shows available to return (taken - used - returned)
+- Creates "Повратница" picking (Vehicle → Warehouse)
 - Updates `returned_qty` on material lines
+- Supports partial returns
 
 ### Location Priority Logic
 
@@ -238,15 +280,17 @@ Inherits from `esfsm` module:
 
 ## Roadmap
 
-- [ ] Stock picking generation (Phase C04 partial implementation)
-- [ ] Integration with `stock.quant` for real-time inventory
+- [x] ~~Stock picking generation~~ ✅ Implemented (Реверс, Испратница, Повратница)
+- [x] ~~Wizard-only quantity control~~ ✅ Implemented
+- [x] ~~Job completion blocking for unreturned materials~~ ✅ Implemented
 - [ ] Barcode scanning for material picking
 - [ ] Mobile app integration for material tracking
 - [ ] Advanced reporting (material usage by job type, technician, etc.)
+- [ ] Integration with purchase orders for material requests
 
 ## Known Issues
 
-None currently. Module is production-ready.
+None currently. Module is production-ready with full test coverage.
 
 ## Support
 
@@ -274,5 +318,5 @@ None currently. Module is production-ready.
 
 ---
 
-**Version:** 18.0.1.0.0
-**Last Updated:** 2025-11-22
+**Version:** 18.0.1.1.0
+**Last Updated:** 2025-12-02

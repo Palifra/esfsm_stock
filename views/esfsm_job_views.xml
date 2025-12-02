@@ -17,24 +17,56 @@
             <!-- Add material tab in notebook (before signatures) -->
             <xpath expr="//page[@name='signatures']" position="before">
                 <page string="Материјали" name="materials">
+                    <!-- Hidden fields for visibility conditions -->
+                    <field name="has_materials_to_take" invisible="1"/>
+                    <field name="has_materials_to_consume" invisible="1"/>
+                    <field name="has_materials_to_return" invisible="1"/>
+                    <field name="materials_to_return_count" invisible="1"/>
+
+                    <!-- Warning banner for unreturned materials -->
+                    <div class="alert alert-warning" role="alert"
+                         invisible="not has_materials_to_return">
+                        <strong>⚠️ Невратени материјали!</strong>
+                        Има <field name="materials_to_return_count" readonly="1" class="oe_inline"/> материјал(и) кои не се вратени.
+                        Работата не може да се заврши додека материјалите не се вратат или означат како искористени.
+                    </div>
+
                     <field name="material_ids"/>
                     <group class="oe_subtotal_footer oe_right">
                         <field name="material_total" widget="monetary"/>
                         <field name="currency_id" invisible="1"/>
                     </group>
                     <div class="oe_clear"/>
-                    <field name="has_materials_to_take" invisible="1"/>
-                    <group>
-                        <group>
-                            <button name="action_add_materials" string="Додади материјали" type="object"
-                                    class="oe_highlight" icon="fa-plus"/>
-                            <button name="action_take_all_materials" string="Превземи материјали" type="object"
-                                    class="btn-primary" icon="fa-download"
-                                    invisible="not has_materials_to_take"/>
-                            <button name="action_return_materials" string="Врати материјали" type="object"
-                                    class="btn-secondary" icon="fa-undo"/>
-                        </group>
-                    </group>
+
+                    <!-- Material workflow buttons -->
+                    <div class="row mt-3">
+                        <div class="col-12">
+                            <div class="btn-group" role="group">
+                                <!-- 1. Додади - секогаш видливо -->
+                                <button name="action_add_materials" string="Додади" type="object"
+                                        class="btn btn-secondary" icon="fa-plus"
+                                        title="Додади планирани материјали"/>
+
+                                <!-- 2. Превземи - видливо кога има за превземање -->
+                                <button name="action_take_materials" string="Превземи" type="object"
+                                        class="btn btn-primary" icon="fa-download"
+                                        invisible="not has_materials_to_take"
+                                        title="Превземи материјали од магацин"/>
+
+                                <!-- 3. Потроши - видливо кога има за потрошувачка -->
+                                <button name="action_consume_materials" string="Потроши" type="object"
+                                        class="btn btn-success" icon="fa-check"
+                                        invisible="not has_materials_to_consume"
+                                        title="Означи потрошени материјали"/>
+
+                                <!-- 4. Врати - видливо кога има за враќање -->
+                                <button name="action_return_materials" string="Врати" type="object"
+                                        class="btn btn-warning" icon="fa-undo"
+                                        invisible="not has_materials_to_return"
+                                        title="Врати неискористени материјали"/>
+                            </div>
+                        </div>
+                    </div>
                 </page>
             </xpath>
         </field>
@@ -65,6 +97,8 @@
                         domain="[('material_count', '>', 0)]"/>
                 <filter string="Без материјали" name="no_materials"
                         domain="[('material_count', '=', 0)]"/>
+                <filter string="Невратени материјали" name="has_materials_to_return"
+                        domain="[('has_materials_to_return', '=', True)]"/>
             </xpath>
         </field>
     </record>

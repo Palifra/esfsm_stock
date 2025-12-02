@@ -18,9 +18,13 @@ Key Features
 * **Team Vehicle Assignment**: Assign vehicles to field service teams
 * **Material Lifecycle Tracking**: Track materials through planned → taken → used → returned
 * **Smart Source Location**: Automatic priority (team vehicle > tech vehicle > warehouse)
-* **Material Return Wizard**: Return unused materials from job to warehouse
-* **Add Materials Wizard**: Request additional materials during job execution
+* **Strict Wizard-Only Workflow**: Quantity fields are readonly - all changes via wizards
+* **Add Materials Wizard**: Plan materials needed for the job
+* **Take Materials Wizard**: Pick materials from warehouse (creates Реверс document)
+* **Consume Materials Wizard**: Record actual usage (creates Испратница document)
+* **Return Materials Wizard**: Return unused materials (creates Повратница document)
 * **Stock Picking Integration**: All material movements create traceable stock pickings
+* **Job Completion Control**: Job cannot complete with unreturned materials
 
 Material Lifecycle
 ------------------
@@ -32,7 +36,7 @@ Material Lifecycle
 Technical Details
 -----------------
 * Extends: esfsm.job, esfsm.team, fleet.vehicle, hr.employee, stock.picking
-* New Models: esfsm.job.material, esfsm.return.material.wizard, esfsm.add.material.wizard
+* New Models: esfsm.job.material, esfsm.add.material.wizard, esfsm.take.material.wizard, esfsm.consume.material.wizard, esfsm.return.material.wizard
 * Dependencies: esfsm, stock, fleet
 * Multi-company compatible
 * Full constraint validation for material quantities

@@ -12,8 +12,8 @@
                     </group>
                     <notebook>
                         <page string="Материјали за враќање">
-                            <field name="line_ids">
-                                <list editable="bottom">
+                            <field name="line_ids" nolabel="1">
+                                <list editable="bottom" create="false" delete="false">
                                     <field name="product_id" readonly="1"/>
                                     <field name="lot_id" readonly="1" optional="show"/>
                                     <field name="product_uom_id" readonly="1" groups="uom.group_uom"/>
@@ -65,5 +65,117 @@
                 </footer>
             </form>
         </field>
+    </record>
+
+    <!-- Take Material Wizard -->
+    <record id="esfsm_take_material_wizard_view_form" model="ir.ui.view">
+        <field name="name">esfsm.take.material.wizard.form</field>
+        <field name="model">esfsm.take.material.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Превземи материјали">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="job_id" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="source_location_id" readonly="1"/>
+                            <field name="dest_location_id" readonly="1"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Материјали за превземање">
+                            <field name="line_ids" nolabel="1">
+                                <list editable="bottom" create="false" delete="false"
+                                      decoration-danger="status == 'no_stock'"
+                                      decoration-warning="status == 'partial'"
+                                      decoration-success="status == 'ok'">
+                                    <field name="product_id" readonly="1"/>
+                                    <field name="lot_id" readonly="1" optional="show"/>
+                                    <field name="product_uom_id" readonly="1" groups="uom.group_uom"/>
+                                    <field name="planned_qty" readonly="1"/>
+                                    <field name="already_taken_qty" readonly="1"/>
+                                    <field name="qty_to_take" readonly="1"/>
+                                    <field name="available_qty" readonly="1"/>
+                                    <field name="take_qty"/>
+                                    <field name="status" readonly="1"/>
+                                    <field name="material_line_id" column_invisible="1"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
+                    <div class="alert alert-info" role="alert">
+                        <strong>Легенда:</strong>
+                        <span class="text-success"> ✓ Достапно</span> |
+                        <span class="text-warning"> ⚠ Делумно</span> |
+                        <span class="text-danger"> ✗ Нема залиха</span>
+                    </div>
+                </sheet>
+                <footer>
+                    <button string="Превземи" name="action_confirm" type="object" class="btn-primary"/>
+                    <button string="Откажи" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <!-- Consume Material Wizard -->
+    <record id="esfsm_consume_material_wizard_view_form" model="ir.ui.view">
+        <field name="name">esfsm.consume.material.wizard.form</field>
+        <field name="model">esfsm.consume.material.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Потроши материјали">
+                <sheet>
+                    <group>
+                        <field name="job_id" readonly="1"/>
+                    </group>
+                    <notebook>
+                        <page string="Материјали за потрошувачка">
+                            <field name="line_ids" nolabel="1">
+                                <list editable="bottom" create="false" delete="false">
+                                    <field name="product_id" readonly="1"/>
+                                    <field name="lot_id" readonly="1" optional="show"/>
+                                    <field name="product_uom_id" readonly="1" groups="uom.group_uom"/>
+                                    <field name="taken_qty" readonly="1"/>
+                                    <field name="already_used_qty" readonly="1"/>
+                                    <field name="already_returned_qty" readonly="1"/>
+                                    <field name="available_to_consume" readonly="1"/>
+                                    <field name="consume_qty"/>
+                                    <field name="material_line_id" column_invisible="1"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
+                    <div class="alert alert-info" role="alert">
+                        <strong>Информација:</strong> Внесете ја количината што е реално потрошена на работата.
+                        Остатокот ќе треба да се врати во магацин.
+                    </div>
+                </sheet>
+                <footer>
+                    <button string="Потроши" name="action_confirm" type="object" class="btn-primary"/>
+                    <button string="Откажи" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <!-- Action for Take Material Wizard -->
+    <record id="esfsm_take_material_wizard_action" model="ir.actions.act_window">
+        <field name="name">Превземи материјали</field>
+        <field name="res_model">esfsm.take.material.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+        <field name="binding_model_id" ref="esfsm.model_esfsm_job"/>
+        <field name="binding_view_types">form</field>
+    </record>
+
+    <!-- Action for Consume Material Wizard -->
+    <record id="esfsm_consume_material_wizard_action" model="ir.actions.act_window">
+        <field name="name">Потроши материјали</field>
+        <field name="res_model">esfsm.consume.material.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+        <field name="binding_model_id" ref="esfsm.model_esfsm_job"/>
+        <field name="binding_view_types">form</field>
     </record>
 </odoo>

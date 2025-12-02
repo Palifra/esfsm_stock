@@ -19,10 +19,11 @@ class TestEsfsmStock(TransactionCase):
             'name': 'Test Customer',
         })
 
-        # Create test product
+        # Create test product (storable for stock tracking)
         cls.product = cls.env['product.product'].create({
             'name': 'Test Product',
             'type': 'consu',
+            'is_storable': True,  # Odoo 18: storable product
             'standard_price': 100.0,
         })
 
@@ -492,3 +493,375 @@ class TestJobActions(TestEsfsmStock):
         self.assertEqual(action['res_model'], 'esfsm.return.material.wizard')
         self.assertEqual(action['view_mode'], 'form')
         self.assertEqual(action['target'], 'new')
+
+    def test_04_action_take_materials(self):
+        """Test action_take_materials returns correct action"""
+        action = self.job.action_take_materials()
+
+        self.assertEqual(action['type'], 'ir.actions.act_window')
+        self.assertEqual(action['res_model'], 'esfsm.take.material.wizard')
+        self.assertEqual(action['view_mode'], 'form')
+        self.assertEqual(action['target'], 'new')
+
+    def test_05_action_consume_materials(self):
+        """Test action_consume_materials returns correct action"""
+        action = self.job.action_consume_materials()
+
+        self.assertEqual(action['type'], 'ir.actions.act_window')
+        self.assertEqual(action['res_model'], 'esfsm.consume.material.wizard')
+        self.assertEqual(action['view_mode'], 'form')
+        self.assertEqual(action['target'], 'new')
+
+
+@tagged('post_install', '-at_install', 'esfsm_stock')
+class TestMaterialFlags(TestEsfsmStock):
+    """Test material flag computed fields on job"""
+
+    def test_01_has_materials_to_take(self):
+        """Test has_materials_to_take computation"""
+        # No materials - should be False
+        self.assertFalse(self.job.has_materials_to_take)
+
+        # Add planned material
+        material = self._create_material(planned_qty=10.0, taken_qty=0.0)
+        self.assertTrue(self.job.has_materials_to_take)
+
+        # Take all materials
+        material.with_context(skip_auto_picking=True).write({'taken_qty': 10.0})
+        self.assertFalse(self.job.has_materials_to_take)
+
+    def test_02_has_materials_to_consume(self):
+        """Test has_materials_to_consume computation"""
+        # No materials - should be False
+        self.assertFalse(self.job.has_materials_to_consume)
+
+        # Add taken material
+        material = self._create_material(taken_qty=10.0, used_qty=0.0)
+        self.assertTrue(self.job.has_materials_to_consume)
+
+        # Consume all materials
+        material.write({'used_qty': 10.0})
+        self.assertFalse(self.job.has_materials_to_consume)
+
+    def test_03_has_materials_to_return(self):
+        """Test has_materials_to_return computation"""
+        # No materials - should be False
+        self.assertFalse(self.job.has_materials_to_return)
+
+        # Add taken material with some used
+        material = self._create_material(taken_qty=10.0, used_qty=6.0)
+        self.assertTrue(self.job.has_materials_to_return)
+        self.assertEqual(self.job.materials_to_return_count, 1)
+
+        # Return remaining
+        material.with_context(skip_auto_picking=True).write({'returned_qty': 4.0})
+        self.assertFalse(self.job.has_materials_to_return)
+        self.assertEqual(self.job.materials_to_return_count, 0)
+
+
+@tagged('post_install', '-at_install', 'esfsm_stock')
+class TestTakeMaterialWizard(TestEsfsmStock):
+    """Test Take Material Wizard"""
+
+    @classmethod
+    def setUpClass(cls):
+        """Set up test data with stock"""
+        super().setUpClass()
+
+        # Get main warehouse location
+        cls.warehouse = cls.env['stock.warehouse'].search([
+            ('company_id', '=', cls.env.company.id)
+        ], limit=1)
+        cls.stock_location = cls.warehouse.lot_stock_id
+
+        # Create initial stock
+        cls.env['stock.quant'].create({
+            'product_id': cls.product.id,
+            'location_id': cls.stock_location.id,
+            'quantity': 100.0,
+        })
+
+    def setUp(self):
+        """Set up test material for take"""
+        super().setUp()
+        self.material = self._create_material(
+            planned_qty=10.0,
+            taken_qty=0.0,
+        )
+
+    def test_01_wizard_auto_populates_lines(self):
+        """Test wizard auto-populates materials to take"""
+        wizard = self.env['esfsm.take.material.wizard'].with_context(
+            active_id=self.job.id
+        ).create({
+            'job_id': self.job.id,
+        })
+
+        self.assertEqual(len(wizard.line_ids), 1)
+        line = wizard.line_ids[0]
+        self.assertEqual(line.product_id, self.product)
+        self.assertEqual(line.planned_qty, 10.0)
+        self.assertEqual(line.qty_to_take, 10.0)
+
+    def test_02_wizard_shows_stock_availability(self):
+        """Test wizard shows available stock"""
+        wizard = self.env['esfsm.take.material.wizard'].with_context(
+            active_id=self.job.id
+        ).create({
+            'job_id': self.job.id,
+        })
+
+        line = wizard.line_ids[0]
+        self.assertEqual(line.available_qty, 100.0)
+        self.assertEqual(line.status, 'ok')
+
+    def test_03_wizard_shows_partial_availability(self):
+        """Test wizard shows partial availability"""
+        # Reduce stock
+        quant = self.env['stock.quant'].search([
+            ('product_id', '=', self.product.id),
+            ('location_id', '=', self.stock_location.id),
+        ])
+        quant.quantity = 5.0
+
+        wizard = self.env['esfsm.take.material.wizard'].with_context(
+            active_id=self.job.id
+        ).create({
+            'job_id': self.job.id,
+        })
+
+        line = wizard.line_ids[0]
+        self.assertEqual(line.available_qty, 5.0)
+        self.assertEqual(line.status, 'partial')
+        self.assertEqual(line.take_qty, 5.0)  # Suggests available amount
+
+    def test_04_wizard_shows_no_stock(self):
+        """Test wizard shows no stock status"""
+        # Remove stock
+        quant = self.env['stock.quant'].search([
+            ('product_id', '=', self.product.id),
+            ('location_id', '=', self.stock_location.id),
+        ])
+        quant.quantity = 0.0
+
+        wizard = self.env['esfsm.take.material.wizard'].with_context(
+            active_id=self.job.id
+        ).create({
+            'job_id': self.job.id,
+        })
+
+        line = wizard.line_ids[0]
+        self.assertEqual(line.available_qty, 0.0)
+        self.assertEqual(line.status, 'no_stock')
+        self.assertEqual(line.take_qty, 0.0)
+
+    def test_05_wizard_takes_material(self):
+        """Test wizard updates taken_qty and creates picking"""
+        wizard = self.env['esfsm.take.material.wizard'].with_context(
+            active_id=self.job.id
+        ).create({
+            'job_id': self.job.id,
+        })
+
+        initial_taken = self.material.taken_qty
+        result = wizard.action_confirm()
+
+        # Check material updated
+        self.assertEqual(self.material.taken_qty, initial_taken + 10.0)
+
+        # Check picking created
+        self.assertEqual(result['res_model'], 'stock.picking')
+        picking = self.env['stock.picking'].browse(result['res_id'])
+        self.assertEqual(picking.esfsm_job_id, self.job)
+        self.assertIn('Реверс', picking.origin)
+
+    def test_06_wizard_validates_empty_take(self):
+        """Test wizard validates no materials to take"""
+        # Set take_qty to 0
+        wizard = self.env['esfsm.take.material.wizard'].with_context(
+            active_id=self.job.id
+        ).create({
+            'job_id': self.job.id,
+        })
+        wizard.line_ids[0].take_qty = 0.0
+
+        with self.assertRaises(ValidationError):
+            wizard.action_confirm()
+
+    def test_07_wizard_validates_exceeds_available(self):
+        """Test wizard validates quantity exceeds available"""
+        wizard = self.env['esfsm.take.material.wizard'].with_context(
+            active_id=self.job.id
+        ).create({
+            'job_id': self.job.id,
+        })
+
+        with self.assertRaises(ValidationError):
+            wizard.line_ids[0].take_qty = 200.0  # Exceeds available 100
+
+
+@tagged('post_install', '-at_install', 'esfsm_stock')
+class TestConsumeMaterialWizard(TestEsfsmStock):
+    """Test Consume Material Wizard"""
+
+    def setUp(self):
+        """Set up test material for consumption"""
+        super().setUp()
+        self.material = self._create_material(
+            taken_qty=10.0,
+            used_qty=0.0,
+        )
+
+    def test_01_wizard_auto_populates_lines(self):
+        """Test wizard auto-populates consumable materials"""
+        wizard = self.env['esfsm.consume.material.wizard'].with_context(
+            active_id=self.job.id
+        ).create({
+            'job_id': self.job.id,
+        })
+
+        self.assertEqual(len(wizard.line_ids), 1)
+        line = wizard.line_ids[0]
+        self.assertEqual(line.product_id, self.product)
+        self.assertEqual(line.taken_qty, 10.0)
+        self.assertEqual(line.available_to_consume, 10.0)
+
+    def test_02_wizard_consumes_material(self):
+        """Test wizard updates used_qty and creates picking"""
+        wizard = self.env['esfsm.consume.material.wizard'].with_context(
+            active_id=self.job.id
+        ).create({
+            'job_id': self.job.id,
+        })
+
+        # Set consumption quantity
+        wizard.line_ids[0].consume_qty = 6.0
+        result = wizard.action_confirm()
+
+        # Check material updated
+        self.assertEqual(self.material.used_qty, 6.0)
+        self.assertEqual(self.material.available_to_return_qty, 4.0)
+
+        # Check picking created
+        self.assertEqual(result['res_model'], 'stock.picking')
+        picking = self.env['stock.picking'].browse(result['res_id'])
+        self.assertEqual(picking.esfsm_job_id, self.job)
+        self.assertIn('Испратница', picking.origin)
+
+    def test_03_wizard_full_consumption(self):
+        """Test wizard allows full consumption"""
+        wizard = self.env['esfsm.consume.material.wizard'].with_context(
+            active_id=self.job.id
+        ).create({
+            'job_id': self.job.id,
+        })
+
+        wizard.line_ids[0].consume_qty = 10.0
+        wizard.action_confirm()
+
+        self.assertEqual(self.material.used_qty, 10.0)
+        self.assertEqual(self.material.available_to_return_qty, 0.0)
+
+    def test_04_wizard_validates_exceeds_available(self):
+        """Test wizard validates quantity exceeds available"""
+        wizard = self.env['esfsm.consume.material.wizard'].with_context(
+            active_id=self.job.id
+        ).create({
+            'job_id': self.job.id,
+        })
+
+        with self.assertRaises(ValidationError):
+            wizard.line_ids[0].consume_qty = 15.0  # Exceeds taken 10
+
+    def test_05_wizard_validates_empty_consumption(self):
+        """Test wizard validates no materials to consume"""
+        wizard = self.env['esfsm.consume.material.wizard'].with_context(
+            active_id=self.job.id
+        ).create({
+            'job_id': self.job.id,
+        })
+        wizard.line_ids[0].consume_qty = 0.0
+
+        with self.assertRaises(ValidationError):
+            wizard.action_confirm()
+
+    def test_06_wizard_skips_fully_consumed(self):
+        """Test wizard doesn't show fully consumed materials"""
+        self.material.write({'used_qty': 10.0})
+
+        wizard = self.env['esfsm.consume.material.wizard'].with_context(
+            active_id=self.job.id
+        ).create({
+            'job_id': self.job.id,
+        })
+
+        self.assertEqual(len(wizard.line_ids), 0)
+
+
+@tagged('post_install', '-at_install', 'esfsm_stock')
+class TestJobCompletion(TestEsfsmStock):
+    """Test job completion with material constraints"""
+
+    def test_01_complete_job_without_materials(self):
+        """Test job can be completed without materials"""
+        # Should not raise error
+        self.job.action_complete()
+        # Check job is in completed state (stage)
+
+    def test_02_cannot_complete_with_unreturned_materials(self):
+        """Test job cannot be completed with unreturned materials"""
+        # Add material with unreturned quantity
+        self._create_material(
+            taken_qty=10.0,
+            used_qty=6.0,
+            returned_qty=0.0,
+        )
+
+        with self.assertRaises(ValidationError) as context:
+            self.job.action_complete()
+
+        # Check error message mentions materials
+        self.assertIn('невратени', str(context.exception).lower())
+
+    def test_03_can_complete_after_full_use(self):
+        """Test job can be completed after full material use"""
+        material = self._create_material(
+            taken_qty=10.0,
+            used_qty=10.0,  # Fully used
+        )
+
+        # Should not raise error
+        self.job.action_complete()
+
+    def test_04_can_complete_after_return(self):
+        """Test job can be completed after materials returned"""
+        material = self._create_material(
+            taken_qty=10.0,
+            used_qty=6.0,
+        )
+        material.with_context(skip_auto_picking=True).write({'returned_qty': 4.0})
+
+        # Should not raise error
+        self.job.action_complete()
+
+    def test_05_can_complete_with_mixed_materials(self):
+        """Test job completion with mixed material states"""
+        # Material 1: fully used
+        self._create_material(taken_qty=5.0, used_qty=5.0)
+
+        # Material 2: partially used, rest returned
+        product2 = self.env['product.product'].create({
+            'name': 'Test Product 2',
+            'type': 'consu',
+        })
+        material2 = self._create_material(
+            product_id=product2.id,
+            product_uom_id=product2.uom_id.id,
+            taken_qty=10.0,
+            used_qty=6.0,
+            price_unit=50.0,
+        )
+        material2.with_context(skip_auto_picking=True).write({'returned_qty': 4.0})
+
+        # Should not raise error
+        self.job.action_complete()

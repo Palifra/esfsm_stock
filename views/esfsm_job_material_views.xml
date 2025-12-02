@@ -12,18 +12,14 @@
                        invisible="product_tracking == 'none'"/>
                 <field name="product_uom_id" groups="uom.group_uom"/>
                 <field name="planned_qty"/>
-                <field name="taken_qty"/>
-                <field name="used_qty"/>
-                <field name="returned_qty"/>
-                <field name="available_to_return_qty"/>
+                <field name="taken_qty" readonly="1" decoration-info="taken_qty > 0"/>
+                <field name="used_qty" readonly="1" decoration-success="used_qty > 0"/>
+                <field name="returned_qty" readonly="1" decoration-muted="returned_qty > 0"/>
+                <field name="available_to_return_qty" decoration-warning="available_to_return_qty > 0"/>
                 <field name="price_unit" widget="monetary"/>
                 <field name="price_subtotal" widget="monetary"/>
                 <field name="currency_id" column_invisible="1"/>
                 <field name="company_id" column_invisible="1"/>
-                <button name="action_take_material" type="object" string="Превземи"
-                        class="btn-link" icon="fa-download"
-                        invisible="planned_qty == 0 or taken_qty >= planned_qty"
-                        title="Превземи планирана количина"/>
             </list>
         </field>
     </record>
@@ -53,14 +49,18 @@
                     <group string="Количини">
                         <group>
                             <field name="planned_qty"/>
-                            <field name="taken_qty"/>
+                            <field name="taken_qty" readonly="1"/>
                         </group>
                         <group>
-                            <field name="used_qty"/>
-                            <field name="returned_qty"/>
+                            <field name="used_qty" readonly="1"/>
+                            <field name="returned_qty" readonly="1"/>
                             <field name="available_to_return_qty"/>
                         </group>
                     </group>
+                    <div class="alert alert-info" role="alert">
+                        <strong>Информација:</strong> Полињата Земено, Искористено и Вратено се менуваат
+                        преку копчињата "Превземи", "Потроши" и "Врати" во работниот налог.
+                    </div>
                     <group>
                         <field name="price_subtotal" widget="monetary"/>
                     </group>

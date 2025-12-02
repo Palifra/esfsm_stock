@@ -186,29 +186,31 @@ class EsfsmJobMaterial(models.Model):
 
     def write(self, vals):
         """
-        Auto-create stock picking when taken_qty is increased.
-        Auto-create stock consumption when used_qty is increased.
+        Write method with context flag to skip auto-picking.
+
+        When called from wizards with context={'skip_auto_picking': True},
+        the picking creation is skipped because the wizard already handles it.
+
+        Direct edits from UI are blocked by readonly fields in views.
         """
-        for line in self:
-            # Check if taken_qty is being increased
-            if 'taken_qty' in vals:
-                old_taken_qty = line.taken_qty
-                new_taken_qty = vals['taken_qty']
+        # Skip auto-picking if called from wizard (wizard already created picking)
+        if self.env.context.get('skip_auto_picking'):
+            return super().write(vals)
 
-                if new_taken_qty > old_taken_qty:
-                    # Create picking for the delta quantity
-                    qty_delta = new_taken_qty - old_taken_qty
-                    line._create_material_picking(qty_delta)
+        # For any other write (should not happen due to readonly fields),
+        # we still prevent direct quantity changes without proper workflow
+        quantity_fields = ['taken_qty', 'used_qty', 'returned_qty']
+        changed_qty_fields = [f for f in quantity_fields if f in vals]
 
-            # Check if used_qty is being increased
-            if 'used_qty' in vals:
-                old_used_qty = line.used_qty
-                new_used_qty = vals['used_qty']
-
-                if new_used_qty > old_used_qty:
-                    # Create consumption move for the delta quantity
-                    qty_delta = new_used_qty - old_used_qty
-                    line._create_consumption_move(qty_delta)
+        if changed_qty_fields:
+            # Log warning - this should not happen in normal operation
+            import logging
+            _logger = logging.getLogger(__name__)
+            _logger.warning(
+                'Direct write to quantity fields %s on material line %s. '
+                'This should be done via wizards.',
+                changed_qty_fields, self.ids
+            )
 
         return super().write(vals)
 

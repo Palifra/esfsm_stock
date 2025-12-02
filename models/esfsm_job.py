@@ -2,6 +2,7 @@
 # Part of ESFSM Stock. See LICENSE file for full copyright and licensing details.
 
 from odoo import api, models, fields, _
+from odoo.exceptions import ValidationError
 
 
 class EsfsmJob(models.Model):
@@ -22,7 +23,26 @@ class EsfsmJob(models.Model):
     has_materials_to_take = fields.Boolean(
         string='Има материјали за превземање',
         compute='_compute_has_materials_to_take',
+        store=True,
         help='Дали има материјали со планирана количина поголема од земената'
+    )
+    has_materials_to_consume = fields.Boolean(
+        string='Има материјали за потрошувачка',
+        compute='_compute_has_materials_to_consume',
+        store=True,
+        help='Дали има материјали земени но не потрошени/вратени'
+    )
+    has_materials_to_return = fields.Boolean(
+        string='Има невратени материјали',
+        compute='_compute_has_materials_to_return',
+        store=True,
+        help='Дали има материјали кои не се вратени (taken - used - returned > 0)'
+    )
+    materials_to_return_count = fields.Integer(
+        string='Број на невратени материјали',
+        compute='_compute_has_materials_to_return',
+        store=True,
+        help='Број на материјали кои треба да се вратат'
     )
     material_total = fields.Monetary(
         string='Вкупна вредност на материјали',
@@ -49,6 +69,26 @@ class EsfsmJob(models.Model):
             job.has_materials_to_take = any(
                 m.planned_qty > m.taken_qty for m in job.material_ids
             )
+
+    @api.depends('material_ids.taken_qty', 'material_ids.used_qty', 'material_ids.returned_qty')
+    def _compute_has_materials_to_consume(self):
+        """Check if there are taken materials that can be consumed"""
+        for job in self:
+            # Materials that are taken but not fully consumed/returned
+            job.has_materials_to_consume = any(
+                (m.taken_qty - m.used_qty - m.returned_qty) > 0
+                for m in job.material_ids
+            )
+
+    @api.depends('material_ids.taken_qty', 'material_ids.used_qty', 'material_ids.returned_qty')
+    def _compute_has_materials_to_return(self):
+        """Check if there are materials that need to be returned"""
+        for job in self:
+            materials_to_return = job.material_ids.filtered(
+                lambda m: (m.taken_qty - m.used_qty - m.returned_qty) > 0
+            )
+            job.has_materials_to_return = bool(materials_to_return)
+            job.materials_to_return_count = len(materials_to_return)
 
     @api.depends('material_ids.price_subtotal')
     def _compute_material_total(self):
@@ -144,35 +184,63 @@ class EsfsmJob(models.Model):
             'context': {'default_job_id': self.id},
         }
 
-    def action_take_all_materials(self):
-        """Take all planned materials (create Реверс for each)"""
+    def action_take_materials(self):
+        """Open wizard to take materials for job"""
         self.ensure_one()
-        materials_to_take = self.material_ids.filtered(
-            lambda m: m.planned_qty > m.taken_qty
-        )
-        if not materials_to_take:
-            return {
-                'type': 'ir.actions.client',
-                'tag': 'display_notification',
-                'params': {
-                    'title': _('Информација'),
-                    'message': _('Нема материјали за превземање.'),
-                    'type': 'warning',
-                    'sticky': False,
-                }
-            }
-
-        # Take all materials - this triggers _create_material_picking via write()
-        for material in materials_to_take:
-            material.taken_qty = material.planned_qty
-
         return {
-            'type': 'ir.actions.client',
-            'tag': 'display_notification',
-            'params': {
-                'title': _('Успешно'),
-                'message': _('Превземени %d материјали. Реверси се креирани.') % len(materials_to_take),
-                'type': 'success',
-                'sticky': False,
-            }
+            'name': _('Превземи материјали'),
+            'type': 'ir.actions.act_window',
+            'res_model': 'esfsm.take.material.wizard',
+            'view_mode': 'form',
+            'target': 'new',
+            'context': {'default_job_id': self.id, 'active_id': self.id},
         }
+
+    def action_consume_materials(self):
+        """Open wizard to consume materials from job"""
+        self.ensure_one()
+        return {
+            'name': _('Потроши материјали'),
+            'type': 'ir.actions.act_window',
+            'res_model': 'esfsm.consume.material.wizard',
+            'view_mode': 'form',
+            'target': 'new',
+            'context': {'default_job_id': self.id, 'active_id': self.id},
+        }
+
+    def action_take_all_materials(self):
+        """DEPRECATED: Use action_take_materials instead. Kept for backwards compatibility."""
+        return self.action_take_materials()
+
+    def action_complete(self):
+        """
+        Override to validate that all materials are returned before completing job.
+        Materials must either be:
+        - Fully used (used_qty == taken_qty)
+        - Or returned (returned_qty covers the difference)
+        """
+        self.ensure_one()
+
+        # Check for unreturned materials
+        unreturned_materials = self.material_ids.filtered(
+            lambda m: m.available_to_return_qty > 0
+        )
+
+        if unreturned_materials:
+            # Build detailed message with material names and quantities
+            material_details = []
+            for m in unreturned_materials:
+                material_details.append(
+                    f"• {m.product_id.name}: {m.available_to_return_qty} {m.product_uom_id.name}"
+                )
+            details_text = '\n'.join(material_details)
+
+            raise ValidationError(_(
+                'Не може да се заврши работата додека има невратени материјали!\n\n'
+                'Следните материјали треба да се вратат или да се означат како искористени:\n'
+                '%s\n\n'
+                'Користете го копчето "Врати материјали" за да ги вратите невратените материјали, '
+                'или ажурирајте ја "Искористена количина" ако материјалите се потрошени.'
+            ) % details_text)
+
+        return super().action_complete()

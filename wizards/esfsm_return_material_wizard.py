@@ -126,8 +126,11 @@ class EsfsmReturnMaterialWizard(models.TransientModel):
                     'picking_id': picking.id,
                 })
 
-            # Update material line returned_qty
-            line.material_line_id.returned_qty += line.return_qty
+            # Update material line returned_qty (bypass write() warning)
+            new_returned = line.material_line_id.returned_qty + line.return_qty
+            line.material_line_id.with_context(skip_auto_picking=True).write({
+                'returned_qty': new_returned
+            })
 
         # Post message to job chatter
         job.message_post(
