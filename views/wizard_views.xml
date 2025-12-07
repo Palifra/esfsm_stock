@@ -13,7 +13,7 @@
                     <notebook>
                         <page string="Материјали за враќање">
                             <field name="line_ids" nolabel="1">
-                                <list editable="bottom" create="false" delete="false">
+                                <list editable="bottom" create="false" delete="false" no_open="1">
                                     <field name="product_id" readonly="1"/>
                                     <field name="lot_id" readonly="1" optional="show"/>
                                     <field name="product_uom_id" readonly="1" groups="uom.group_uom"/>
@@ -86,20 +86,20 @@
                     <notebook>
                         <page string="Материјали за превземање">
                             <field name="line_ids" nolabel="1">
-                                <list editable="bottom" create="false" delete="false"
+                                <list editable="bottom" create="false" delete="false" no_open="1"
                                       decoration-danger="status == 'no_stock'"
                                       decoration-warning="status == 'partial'"
                                       decoration-success="status == 'ok'">
-                                    <field name="product_id" readonly="1"/>
-                                    <field name="lot_id" readonly="1" optional="show"/>
-                                    <field name="product_uom_id" readonly="1" groups="uom.group_uom"/>
-                                    <field name="planned_qty" readonly="1"/>
-                                    <field name="already_taken_qty" readonly="1"/>
-                                    <field name="qty_to_take" readonly="1"/>
-                                    <field name="available_qty" readonly="1"/>
-                                    <field name="take_qty"/>
-                                    <field name="status" readonly="1"/>
-                                    <field name="material_line_id" column_invisible="1"/>
+                                    <field name="material_line_id" column_invisible="1" force_save="1"/>
+                                    <field name="product_id" readonly="1" force_save="1"/>
+                                    <field name="product_uom_id" column_invisible="1" force_save="1"/>
+                                    <field name="lot_id" readonly="1" optional="show" force_save="1"/>
+                                    <field name="planned_qty" readonly="1" string="План." force_save="1"/>
+                                    <field name="already_taken_qty" readonly="1" string="Земено" force_save="1"/>
+                                    <field name="qty_to_take" readonly="1" string="Потреба" force_save="1"/>
+                                    <field name="available_qty" readonly="1" string="Залиха" force_save="1"/>
+                                    <field name="take_qty" string="Земи"/>
+                                    <field name="status" column_invisible="1" force_save="1"/>
                                 </list>
                             </field>
                         </page>
@@ -109,11 +109,13 @@
                         <span class="text-success"> ✓ Достапно</span> |
                         <span class="text-warning"> ⚠ Делумно</span> |
                         <span class="text-danger"> ✗ Нема залиха</span>
+                        <br/>
+                        <small>Измени ја колоната "Земи" за секоја линија, потоа кликни "Превземи".</small>
                     </div>
                 </sheet>
                 <footer>
                     <button string="Превземи" name="action_confirm" type="object" class="btn-primary"/>
-                    <button string="Откажи" class="btn-secondary" special="cancel"/>
+                    <button string="Затвори" class="btn-secondary" special="cancel"/>
                 </footer>
             </form>
         </field>
@@ -132,7 +134,7 @@
                     <notebook>
                         <page string="Материјали за потрошувачка">
                             <field name="line_ids" nolabel="1">
-                                <list editable="bottom" create="false" delete="false">
+                                <list editable="bottom" create="false" delete="false" no_open="1">
                                     <field name="product_id" readonly="1"/>
                                     <field name="lot_id" readonly="1" optional="show"/>
                                     <field name="product_uom_id" readonly="1" groups="uom.group_uom"/>

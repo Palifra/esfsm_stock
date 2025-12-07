@@ -60,84 +60,23 @@ class EsfsmReturnMaterialWizard(models.TransientModel):
         """Create return picking using Враќање на Реверс type"""
         self.ensure_one()
 
-        if not self.line_ids:
+        lines_to_return = self.line_ids.filtered(lambda l: l.return_qty > 0)
+        if not lines_to_return:
             raise ValidationError(_('Нема материјали за враќање.'))
 
         job = self.job_id
 
-        # Get responsible technician name (or first assigned, or 'Unknown')
-        technician_name = (
-            job.material_responsible_id.name if job.material_responsible_id
-            else job.employee_ids[0].name if job.employee_ids
-            else 'Непознат'
-        )
+        # Use StockPickingService to create picking
+        picking_service = self.env['esfsm.stock.picking.service']
+        picking = picking_service.create_return_picking(job, lines_to_return)
 
-        # Find "Враќање на Реверс" picking type (materials returned from employee)
-        picking_type = self.env['stock.picking.type'].search([
-            ('name', '=', 'Враќање на Реверс'),
-            ('company_id', '=', job.company_id.id)
-        ], limit=1)
-
-        # Fallback to generic internal if not found
-        if not picking_type:
-            picking_type = self.env['stock.picking.type'].search([
-                ('code', '=', 'internal'),
-                ('company_id', '=', job.company_id.id)
-            ], limit=1)
-
-        # Get source (technician) and destination (warehouse) locations
-        source_location = job._get_source_location()  # Technician/vehicle location
-        dest_location = picking_type.default_location_dest_id or self.env.ref('stock.stock_location_stock')
-
-        # Create picking with Враќање на Реверс type and technician name
-        picking = self.env['stock.picking'].create({
-            'picking_type_id': picking_type.id,
-            'location_id': source_location.id,
-            'location_dest_id': dest_location.id,
-            'esfsm_job_id': job.id,
-            'origin': f"{job.name} - Повратница - {technician_name}",
-        })
-
-        # Create stock moves for each line
-        for line in self.line_ids:
-            if line.return_qty <= 0:
-                continue
-
-            move = self.env['stock.move'].create({
-                'name': f"{job.name} - {line.product_id.name}",
-                'product_id': line.product_id.id,
-                'product_uom_qty': line.return_qty,
-                'product_uom': line.product_uom_id.id,
-                'picking_id': picking.id,
-                'location_id': source_location.id,
-                'location_dest_id': dest_location.id,
-            })
-
-            # For lot-tracked products, create move line with lot
-            if line.lot_id:
-                self.env['stock.move.line'].create({
-                    'move_id': move.id,
-                    'product_id': line.product_id.id,
-                    'product_uom_id': line.product_uom_id.id,
-                    'location_id': source_location.id,
-                    'location_dest_id': dest_location.id,
-                    'lot_id': line.lot_id.id,
-                    'quantity': line.return_qty,
-                    'picking_id': picking.id,
-                })
-
-            # Update material line returned_qty (bypass write() warning)
+        # Update material lines returned_qty (bypass write() warning)
+        for line in lines_to_return:
             new_returned = line.material_line_id.returned_qty + line.return_qty
             line.material_line_id.with_context(skip_auto_picking=True).write({
                 'returned_qty': new_returned
             })
 
-        # Post message to job chatter
-        job.message_post(
-            body=_('Повратница од %s: %d материјали - %s') % (technician_name, len(self.line_ids), picking.name)
-        )
-
-        # Return action to view created picking
         return {
             'type': 'ir.actions.act_window',
             'res_model': 'stock.picking',

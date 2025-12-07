@@ -3,21 +3,21 @@
 
 {
     'name': 'ESFSM - Stock & Fleet Integration',
-    'version': '18.0.1.1.0',
+    'version': '18.0.1.2.0',
     'category': 'Services/Field Service',
-    'summary': 'Material tracking with fleet vehicle stock locations for field service jobs',
+    'summary': 'Material tracking for field service jobs with centralized location management',
     'description': """
 Field Service Management - Stock & Fleet Integration
 =====================================================
 
-This module extends ESFSM with comprehensive material tracking and fleet integration:
+This module extends ESFSM with comprehensive material tracking:
 
 Key Features
 ------------
-* **Automatic Vehicle Stock Locations**: Each vehicle automatically gets its own stock location
+* **Centralized Location Provider**: Uses eskon_reverse for stock location management
 * **Team Vehicle Assignment**: Assign vehicles to field service teams
 * **Material Lifecycle Tracking**: Track materials through planned → taken → used → returned
-* **Smart Source Location**: Automatic priority (team vehicle > tech vehicle > warehouse)
+* **Configurable Location Priority**: Settings control priority (vehicle/employee/team first)
 * **Strict Wizard-Only Workflow**: Quantity fields are readonly - all changes via wizards
 * **Add Materials Wizard**: Plan materials needed for the job
 * **Take Materials Wizard**: Pick materials from warehouse (creates Реверс document)
@@ -33,11 +33,19 @@ Material Lifecycle
 3. **Used** - Materials consumed on job site
 4. **Returned** - Unused materials returned to warehouse
 
+Location Management
+-------------------
+Stock locations for resources (employees, vehicles) are managed centrally by eskon_reverse.
+This module uses the stock.location.provider service to determine:
+- Source locations for material picking
+- Destination locations for returns
+- FSM job location priority based on Settings configuration
+
 Technical Details
 -----------------
-* Extends: esfsm.job, esfsm.team, fleet.vehicle, hr.employee, stock.picking
+* Extends: esfsm.job, esfsm.team, hr.employee, stock.picking
 * New Models: esfsm.job.material, esfsm.add.material.wizard, esfsm.take.material.wizard, esfsm.consume.material.wizard, esfsm.return.material.wizard
-* Dependencies: esfsm, stock, fleet
+* Dependencies: esfsm, stock, fleet, eskon_reverse
 * Multi-company compatible
 * Full constraint validation for material quantities
 
@@ -49,7 +57,7 @@ Technical Details
         'esfsm',
         'stock',
         'fleet',
-        'l10n_mk_reverse',
+        'eskon_reverse',
     ],
     'data': [
         # Security

@@ -98,45 +98,41 @@ class EsfsmJob(models.Model):
 
     def _get_source_location(self):
         """
-        Determine source location for materials with priority logic:
-        1. Team vehicle location (if job assigned to team)
-        2. FIRST employee location (if job assigned to multiple employees)
-        3. Field technicians location (for technicians without vehicle)
-        4. Default warehouse location (ultimate fallback)
+        Determine source location for materials using the Location Provider.
+
+        Uses centralized priority logic from eskon_reverse.stock.location.provider:
+        - Priority based on Settings: vehicle/employee/team first
+        - Falls back through configured resources
+        - Ultimate fallback to warehouse
 
         Returns:
             stock.location recordset
         """
         self.ensure_one()
 
-        # Priority 1: Team vehicle location
-        if self.team_id and self.team_id.stock_location_id:
-            return self.team_id.stock_location_id
+        # Use the centralized Location Provider service
+        provider = self.env['stock.location.provider']
+        location = provider.get_fsm_location(self)
 
-        # Priority 2: FIRST employee's stock location
-        if self.employee_ids:
-            first_employee = self.employee_ids[0]
-            if first_employee.stock_location_id:
-                return first_employee.stock_location_id
+        if location:
+            return location
 
-        # Priority 3: Field technicians location (for technicians without vehicle)
-        # This prevents materials from staying in main warehouse
+        # Fallback: Field technicians location (for technicians without vehicle)
         if self.employee_ids:
             field_tech_location = self.env.ref('esfsm_stock.stock_location_field_technicians', raise_if_not_found=False)
             if field_tech_location:
                 return field_tech_location
 
-        # Priority 4: Default warehouse stock location (ultimate fallback)
+        # Ultimate fallback: Default warehouse stock location
         warehouse = self.env['stock.warehouse'].search([
             ('company_id', '=', self.company_id.id)
         ], limit=1)
 
         if warehouse:
             return warehouse.lot_stock_id
-        else:
-            # Ultimate fallback: any internal location
-            return self.env.ref('stock.stock_location_stock', raise_if_not_found=False) or \
-                   self.env['stock.location'].search([('usage', '=', 'internal')], limit=1)
+
+        return self.env.ref('stock.stock_location_stock', raise_if_not_found=False) or \
+               self.env['stock.location'].search([('usage', '=', 'internal')], limit=1)
 
     def _get_destination_location(self):
         """
@@ -208,9 +204,6 @@ class EsfsmJob(models.Model):
             'context': {'default_job_id': self.id, 'active_id': self.id},
         }
 
-    def action_take_all_materials(self):
-        """DEPRECATED: Use action_take_materials instead. Kept for backwards compatibility."""
-        return self.action_take_materials()
 
     def action_complete(self):
         """

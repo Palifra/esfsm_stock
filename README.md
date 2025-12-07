@@ -1,13 +1,19 @@
 # ESFSM - Stock & Fleet Integration
 
-Comprehensive material tracking with fleet vehicle stock locations for Odoo 18 field service jobs.
+Comprehensive material tracking with centralized location management for Odoo 18 field service jobs.
 
 ## Features
 
-### 🚗 Automatic Vehicle Stock Locations
-- Each fleet vehicle automatically gets its own dedicated stock location
-- Locations are organized under "Возила" (Vehicles) parent location
-- Location names auto-update when vehicle license plate changes
+### 🏭 Centralized Location Provider (NEW in 18.0.1.2.0)
+- Uses `eskon_reverse.stock.location.provider` for all stock locations
+- Configurable location priority (vehicle/employee/team first)
+- Settings UI for auto-creation options
+- Consistent location hierarchy across all modules
+
+### 🚗 Resource Stock Locations
+- Stock locations for employees, vehicles, and teams
+- Locations organized under centralized "Ресурси" hierarchy
+- Automatic creation based on Settings configuration
 - Full integration with Odoo's stock management system
 
 ### 📦 Material Lifecycle Tracking
@@ -200,6 +206,13 @@ Smart button on job form shows material count and opens filtered list.
 - `esfsm.job` - Added `material_ids`, `material_count`, `material_total`, `currency_id`
 - `stock.picking` - Added `esfsm_job_id` for traceability
 
+#### Stock Picking Service
+- `esfsm.stock.picking.service` - Centralized service for creating stock pickings
+  - `create_reverse_picking()` - Creates Реверс (warehouse → vehicle)
+  - `create_delivery_picking()` - Creates Испратница (vehicle → customer)
+  - `create_return_picking()` - Creates Повратница (vehicle → warehouse)
+  - Handles lot tracking, technician name resolution, and picking type fallbacks
+
 ### Wizards
 
 #### `esfsm.add.material.wizard`
@@ -229,19 +242,30 @@ Smart button on job form shows material count and opens filtered list.
 - Updates `returned_qty` on material lines
 - Supports partial returns
 
-### Location Priority Logic
+### Location Priority Logic (via eskon_reverse)
+
+The module uses the centralized Location Provider from `eskon_reverse`:
 
 ```python
 def _get_source_location(self):
-    """Priority: team vehicle > technician vehicle > warehouse"""
-    if self.team_id and self.team_id.stock_location_id:
-        return self.team_id.stock_location_id
+    """
+    Uses eskon_reverse.stock.location.provider for location resolution.
+    Priority is configurable via Settings:
+    - 'vehicle': Vehicle → Employee → Warehouse
+    - 'employee': Employee → Vehicle → Warehouse
+    - 'team': Team → Vehicle → Employee → Warehouse
+    """
+    provider = self.env['stock.location.provider']
+    location = provider.get_fsm_location(self)
 
-    if self.employee_id and self.employee_id.vehicle_id.stock_location_id:
-        return self.employee_id.vehicle_id.stock_location_id
+    if location:
+        return location
 
-    return warehouse.lot_stock_id  # Fallback
+    # Fallback to warehouse
+    return warehouse.lot_stock_id
 ```
+
+Configure priority in **Inventory → Configuration → Settings → Location Provider**.
 
 ## Testing
 
@@ -276,6 +300,7 @@ Inherits from `esfsm` module:
 - `esfsm` - Core field service management
 - `stock` - Inventory management
 - `fleet` - Vehicle management
+- `eskon_reverse` - Centralized Location Provider (NEW)
 - `hr` (indirect via esfsm)
 
 ## Roadmap
@@ -302,10 +327,11 @@ None currently. Module is production-ready with full test coverage.
 ## Related Modules
 
 - [esfsm](https://github.com/Palifra/esfsm) - Core Field Service Management
+- [eskon_reverse](https://github.com/Palifra/eskon_reverse) - Equipment borrowing & Location Provider
 - [esfsm_project](https://github.com/Palifra/esfsm_project) - Project integration
+- [l10n_mk_stock_reports](https://github.com/Palifra/l10n_mk_stock_reports) - Stock reports (depends on eskon_reverse)
 - [esfsm_timesheet](https://github.com/Palifra/esfsm_timesheet) (planned)
 - [esfsm_helpdesk](https://github.com/Palifra/esfsm_helpdesk) (planned)
-- [esfsm_report](https://github.com/Palifra/esfsm_report) (planned)
 
 ## Credits
 
@@ -318,5 +344,25 @@ None currently. Module is production-ready with full test coverage.
 
 ---
 
-**Version:** 18.0.1.1.0
-**Last Updated:** 2025-12-02
+## Changelog
+
+### 18.0.1.2.0 (2024-12-07)
+- **BREAKING:** Changed dependency from `l10n_mk_reverse` to `eskon_reverse`
+- Integrated with centralized Location Provider service
+- Uses `stock.location.provider.get_fsm_location()` for location resolution
+- Location hierarchy now managed by eskon_reverse module
+- Removed duplicate location creation logic
+
+### 18.0.1.1.0 (2024-12-04)
+- Full wizard-based material workflow
+- Stock picking generation for all operations
+- Job completion blocking for unreturned materials
+
+### 18.0.1.0.0
+- Initial release with material tracking
+- Vehicle stock locations
+
+---
+
+**Version:** 18.0.1.2.0
+**Last Updated:** 2024-12-07

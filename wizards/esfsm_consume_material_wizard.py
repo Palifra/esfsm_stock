@@ -63,71 +63,9 @@ class EsfsmConsumeMaterialWizard(models.TransientModel):
 
         job = self.job_id
 
-        # Get technician name
-        technician_name = (
-            job.material_responsible_id.name if job.material_responsible_id
-            else job.employee_ids[0].name if job.employee_ids
-            else 'Непознат'
-        )
-
-        # Get source (technician) and destination (customer) locations
-        source_location = job._get_source_location()
-        dest_location = self.env.ref('stock.stock_location_customers')
-
-        # Find outgoing picking type (Испратници)
-        picking_type = self.env['stock.picking.type'].search([
-            ('code', '=', 'outgoing'),
-            ('company_id', '=', job.company_id.id)
-        ], limit=1)
-
-        # Create picking
-        picking = self.env['stock.picking'].create({
-            'picking_type_id': picking_type.id,
-            'location_id': source_location.id,
-            'location_dest_id': dest_location.id,
-            'esfsm_job_id': job.id,
-            'partner_id': job.partner_id.id,
-            'origin': f"{job.name} - Испратница - {technician_name}",
-        })
-
-        # Create moves for each line
-        for line in lines_to_consume:
-            move = self.env['stock.move'].create({
-                'name': f"{job.name} - {line.product_id.name}",
-                'product_id': line.product_id.id,
-                'product_uom_qty': line.consume_qty,
-                'product_uom': line.product_uom_id.id,
-                'picking_id': picking.id,
-                'location_id': source_location.id,
-                'location_dest_id': dest_location.id,
-            })
-
-            # Handle lot tracking
-            if line.lot_id:
-                self.env['stock.move.line'].create({
-                    'move_id': move.id,
-                    'product_id': line.product_id.id,
-                    'product_uom_id': line.product_uom_id.id,
-                    'location_id': source_location.id,
-                    'location_dest_id': dest_location.id,
-                    'lot_id': line.lot_id.id,
-                    'quantity': line.consume_qty,
-                    'picking_id': picking.id,
-                })
-
-        # Validate picking
-        picking.action_confirm()
-        picking.action_assign()
-
-        # Set quantities done
-        for move in picking.move_ids:
-            if not move.move_line_ids:
-                move.quantity = move.product_uom_qty
-            else:
-                for ml in move.move_line_ids:
-                    ml.quantity = ml.quantity or move.product_uom_qty
-
-        picking.button_validate()
+        # Use StockPickingService to create picking
+        picking_service = self.env['esfsm.stock.picking.service']
+        picking = picking_service.create_delivery_picking(job, lines_to_consume)
 
         # Update material lines used_qty (bypass write() auto-picking)
         for line in lines_to_consume:
@@ -135,17 +73,6 @@ class EsfsmConsumeMaterialWizard(models.TransientModel):
             line.material_line_id.with_context(skip_auto_picking=True).write({
                 'used_qty': new_used
             })
-
-        # Post message
-        material_list = ', '.join([
-            f"{l.product_id.name} ({l.consume_qty} {l.product_uom_id.name})"
-            for l in lines_to_consume
-        ])
-        job.message_post(
-            body=_('Испратница од %s кон %s: %s - %s') % (
-                technician_name, job.partner_id.name, material_list, picking.name
-            )
-        )
 
         # Check if there are materials to return
         remaining = sum(
@@ -181,6 +108,7 @@ class EsfsmConsumeMaterialWizard(models.TransientModel):
             'view_mode': 'form',
             'target': 'current',
         }
+
 
 
 class EsfsmConsumeMaterialWizardLine(models.TransientModel):

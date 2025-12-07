@@ -1,18 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
     <data noupdate="1">
-        <!-- Parent Stock Location for All Vehicles -->
-        <record id="stock_location_vehicles" model="stock.location">
-            <field name="name">Возила</field>
-            <field name="usage">internal</field>
-            <field name="location_id" ref="stock.stock_location_stock"/>
-        </record>
+        <!--
+        NOTE: Parent location for vehicles (Возила) is now provided by eskon_reverse module
+        See: eskon_reverse.stock_location_vehicles
+
+        The esfsm_stock module now uses the centralized Location Provider
+        from eskon_reverse for consistent location management.
+        -->
 
         <!-- Stock Location for Field Technicians Without Vehicles -->
         <record id="stock_location_field_technicians" model="stock.location">
             <field name="name">Терени техничари</field>
             <field name="usage">internal</field>
-            <field name="location_id" ref="stock.stock_location_stock"/>
+            <field name="location_id" ref="eskon_reverse.stock_location_employees"/>
+            <field name="comment">Локација за материјали кај техничари без доделено возило</field>
         </record>
     </data>
 </odoo>

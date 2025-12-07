@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 # Part of ESFSM Stock. See LICENSE file for full copyright and licensing details.
 
+import logging
+from markupsafe import Markup
 from odoo import api, models, fields, _
 from odoo.exceptions import ValidationError
+
+_logger = logging.getLogger(__name__)
 
 
 class EsfsmTakeMaterialWizard(models.TransientModel):
@@ -71,17 +75,28 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
         )
 
         lines = []
+        _logger.info("=== TAKE WIZARD default_get ===")
+        _logger.info(f"Job: {job.name}, Materials to take: {len(materials_to_take)}")
+        _logger.info(f"Source location: {source_location.complete_name if source_location else 'NONE'}")
+
         for material in materials_to_take:
             qty_to_take = material.planned_qty - material.taken_qty
 
-            # Check available stock
+            # Check available stock (include child locations)
             available_qty = 0.0
             if source_location:
+                # Get all child locations too
+                child_locations = self.env['stock.location'].search([
+                    ('id', 'child_of', source_location.id),
+                    ('usage', '=', 'internal'),
+                ])
                 quants = self.env['stock.quant'].search([
                     ('product_id', '=', material.product_id.id),
-                    ('location_id', '=', source_location.id),
+                    ('location_id', 'in', child_locations.ids),
+                    ('quantity', '>', 0),
                 ])
                 available_qty = sum(quants.mapped('quantity'))
+                _logger.info(f"  Product: {material.product_id.name[:30]}, Need: {qty_to_take}, Stock: {available_qty}")
 
             # Determine status
             if available_qty <= 0:
@@ -114,82 +129,73 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
         """Create Реверс picking for taken materials"""
         self.ensure_one()
 
-        lines_to_take = self.line_ids.filtered(lambda l: l.take_qty > 0)
-        if not lines_to_take:
-            raise ValidationError(_('Нема материјали за превземање.'))
-
         job = self.job_id
 
-        # Get technician name
-        technician_name = (
-            job.material_responsible_id.name if job.material_responsible_id
-            else job.employee_ids[0].name if job.employee_ids
-            else 'Непознат'
-        )
+        _logger.info("=== ACTION_CONFIRM ===")
+        _logger.info(f"Wizard ID: {self.id}, Job: {job.name}")
+        _logger.info(f"Total lines: {len(self.line_ids)}")
+        for line in self.line_ids:
+            _logger.info(f"  Line: product={line.product_id.name[:30] if line.product_id else 'NONE'}, take_qty={line.take_qty}, status={line.status}")
 
-        # Find "Реверс" picking type
-        picking_type = self.env['stock.picking.type'].search([
-            ('name', '=', 'Реверс'),
-            ('company_id', '=', job.company_id.id)
-        ], limit=1)
+        # Separate lines by status
+        lines_to_take = self.line_ids.filtered(lambda l: l.take_qty > 0 and l.material_line_id and l.product_id)
+        partial_lines = self.line_ids.filtered(lambda l: l.status == 'partial')
+        no_stock_lines = self.line_ids.filtered(lambda l: l.status == 'no_stock')
 
-        if not picking_type:
-            picking_type = self.env['stock.picking.type'].search([
-                ('code', '=', 'internal'),
-                ('company_id', '=', job.company_id.id)
-            ], limit=1)
+        # Build notification messages
+        messages = []
 
-        # Get locations
-        source_location = self.source_location_id or self.env.ref('stock.stock_location_stock')
-        dest_location = self.dest_location_id or job._get_source_location()
+        # No stock warning
+        if no_stock_lines:
+            no_stock_items = []
+            for line in no_stock_lines:
+                if line.product_id:
+                    no_stock_items.append(f"• {line.product_id.name}: потребно {line.qty_to_take} {line.product_uom_id.name if line.product_uom_id else ''}")
+            if no_stock_items:
+                messages.append(_("<b>⚠️ Нема на залиха:</b><br/>") + "<br/>".join(no_stock_items))
 
-        # Create picking
-        picking = self.env['stock.picking'].create({
-            'picking_type_id': picking_type.id,
-            'location_id': source_location.id,
-            'location_dest_id': dest_location.id,
-            'esfsm_job_id': job.id,
-            'origin': f"{job.name} - Реверс - {technician_name}",
-        })
+        # Partial stock warning
+        if partial_lines:
+            partial_items = []
+            for line in partial_lines:
+                if line.product_id:
+                    missing = line.qty_to_take - line.available_qty
+                    partial_items.append(
+                        f"• {line.product_id.name}: земено {line.take_qty}, недостасува {missing:.2f} {line.product_uom_id.name if line.product_uom_id else ''}"
+                    )
+            if partial_items:
+                messages.append(_("<b>⚠️ Делумно превземено:</b><br/>") + "<br/>".join(partial_items))
 
-        # Create moves for each line
-        for line in lines_to_take:
-            move = self.env['stock.move'].create({
-                'name': f"{job.name} - {line.product_id.name}",
-                'product_id': line.product_id.id,
-                'product_uom_qty': line.take_qty,
-                'product_uom': line.product_uom_id.id,
-                'picking_id': picking.id,
-                'location_id': source_location.id,
-                'location_dest_id': dest_location.id,
-            })
+        # Check if we have anything to take
+        if not lines_to_take:
+            # Build detailed error message
+            error_parts = [_('Нема материјали на залиха за превземање.')]
 
-            # Handle lot tracking
-            if line.lot_id:
-                self.env['stock.move.line'].create({
-                    'move_id': move.id,
-                    'product_id': line.product_id.id,
-                    'product_uom_id': line.product_uom_id.id,
-                    'location_id': source_location.id,
-                    'location_dest_id': dest_location.id,
-                    'lot_id': line.lot_id.id,
-                    'quantity': line.take_qty,
-                    'picking_id': picking.id,
-                })
+            if no_stock_lines:
+                error_parts.append(_('\n\n⚠️ Нема на залиха:'))
+                for line in no_stock_lines:
+                    if line.product_id:
+                        error_parts.append(f"  • {line.product_id.name}: потребно {line.qty_to_take}")
 
-        # Validate picking
-        picking.action_confirm()
-        picking.action_assign()
+            if partial_lines:
+                error_parts.append(_('\n\n⚠️ Делумно достапно:'))
+                for line in partial_lines:
+                    if line.product_id:
+                        error_parts.append(f"  • {line.product_id.name}: достапно {line.available_qty} од {line.qty_to_take}")
 
-        # Set quantities done
-        for move in picking.move_ids:
-            if not move.move_line_ids:
-                move.quantity = move.product_uom_qty
-            else:
-                for ml in move.move_line_ids:
-                    ml.quantity = ml.quantity or move.product_uom_qty
+            # Also post to chatter for record
+            if messages:
+                job.message_post(
+                    body=Markup("<br/><br/>".join(messages)),
+                    message_type='notification',
+                    subtype_xmlid='mail.mt_note',
+                )
 
-        picking.button_validate()
+            raise ValidationError('\n'.join(error_parts))
+
+        # Use StockPickingService to create picking
+        picking_service = self.env['esfsm.stock.picking.service']
+        picking = picking_service.create_reverse_picking(job, lines_to_take)
 
         # Update material lines taken_qty (bypass write() auto-picking)
         for line in lines_to_take:
@@ -198,16 +204,20 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
                 'taken_qty': new_taken
             })
 
-        # Post message
-        material_list = ', '.join([
-            f"{l.product_id.name} ({l.take_qty} {l.product_uom_id.name})"
-            for l in lines_to_take
-        ])
-        job.message_post(
-            body=_('Реверс издаден на %s: %s - %s') % (
-                technician_name, material_list, picking.name
+        # Post notification to job chatter if there were partial/missing materials
+        if messages:
+            taken_items = []
+            for line in lines_to_take:
+                taken_items.append(f"• {line.product_id.name}: {line.take_qty} {line.product_uom_id.name if line.product_uom_id else ''}")
+
+            success_msg = _("<b>✅ Успешно превземено:</b><br/>") + "<br/>".join(taken_items)
+            messages.insert(0, success_msg)
+
+            job.message_post(
+                body=Markup("<br/><br/>".join(messages)),
+                message_type='notification',
+                subtype_xmlid='mail.mt_note',
             )
-        )
 
         return {
             'type': 'ir.actions.act_window',
@@ -231,44 +241,33 @@ class EsfsmTakeMaterialWizardLine(models.TransientModel):
     material_line_id = fields.Many2one(
         'esfsm.job.material',
         string='Материјална линија',
-        required=True,
-        readonly=True,
     )
     product_id = fields.Many2one(
         'product.product',
         string='Производ',
-        required=True,
-        readonly=True,
     )
     product_uom_id = fields.Many2one(
         'uom.uom',
         string='Мерна единица',
-        required=True,
-        readonly=True,
     )
     lot_id = fields.Many2one(
         'stock.lot',
         string='Лот',
-        readonly=True,
     )
     planned_qty = fields.Float(
         string='Планирано',
-        readonly=True,
         digits='Product Unit of Measure',
     )
     already_taken_qty = fields.Float(
         string='Веќе земено',
-        readonly=True,
         digits='Product Unit of Measure',
     )
     qty_to_take = fields.Float(
         string='За превземање',
-        readonly=True,
         digits='Product Unit of Measure',
     )
     available_qty = fields.Float(
         string='На залиха',
-        readonly=True,
         digits='Product Unit of Measure',
     )
     take_qty = fields.Float(
@@ -279,7 +278,7 @@ class EsfsmTakeMaterialWizardLine(models.TransientModel):
         ('ok', 'Достапно'),
         ('partial', 'Делумно'),
         ('no_stock', 'Нема залиха'),
-    ], string='Статус', readonly=True)
+    ], string='Статус')
 
     @api.constrains('take_qty', 'available_qty', 'qty_to_take')
     def _check_take_qty(self):
@@ -287,7 +286,62 @@ class EsfsmTakeMaterialWizardLine(models.TransientModel):
         for line in self:
             if line.take_qty < 0:
                 raise ValidationError(_('Количината не може да биде негативна.'))
-            if line.take_qty > line.available_qty:
+            if line.take_qty > line.available_qty and line.product_id:
                 raise ValidationError(_(
                     'Количината за превземање (%s) не може да биде поголема од залихата (%s) за %s'
                 ) % (line.take_qty, line.available_qty, line.product_id.name))
+
+    def action_take_line(self):
+        """Take just this single line"""
+        self.ensure_one()
+
+        if not self.material_line_id or not self.product_id:
+            raise ValidationError(_('Невалидна линија.'))
+
+        if self.take_qty <= 0:
+            raise ValidationError(_('Внесете количина за превземање.'))
+
+        if self.take_qty > self.available_qty:
+            raise ValidationError(_(
+                'Количината за превземање (%s) не може да биде поголема од залихата (%s)'
+            ) % (self.take_qty, self.available_qty))
+
+        job = self.wizard_id.job_id
+
+        # Use StockPickingService to create picking for single line
+        picking_service = self.env['esfsm.stock.picking.service']
+        picking = picking_service.create_reverse_picking(job, self)
+
+        # Update material line taken_qty
+        new_taken = self.material_line_id.taken_qty + self.take_qty
+        self.material_line_id.with_context(skip_auto_picking=True).write({
+            'taken_qty': new_taken
+        })
+
+        # Post to chatter
+        job.message_post(
+            body=Markup(_("<b>✅ Превземено:</b><br/>• %s: %s %s") % (
+                self.product_id.name,
+                self.take_qty,
+                self.product_uom_id.name if self.product_uom_id else ''
+            )),
+            message_type='notification',
+            subtype_xmlid='mail.mt_note',
+        )
+
+        # Update wizard line status
+        self.write({
+            'already_taken_qty': new_taken,
+            'qty_to_take': self.planned_qty - new_taken,
+            'take_qty': 0,
+            'status': 'ok' if new_taken >= self.planned_qty else 'partial',
+        })
+
+        # Return action to stay in wizard
+        return {
+            'type': 'ir.actions.act_window',
+            'res_model': 'esfsm.take.material.wizard',
+            'res_id': self.wizard_id.id,
+            'view_mode': 'form',
+            'target': 'new',
+        }
