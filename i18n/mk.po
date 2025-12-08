@@ -1,0 +1,151 @@
+# Translation of Odoo Server.
+# This file contains the translation of the following modules:
+# * esfsm_stock
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Odoo Server 18.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-12-08 12:00+0000\n"
+"PO-Revision-Date: 2025-12-08 12:00+0000\n"
+"Last-Translator: ESKON <info@eskon.com.mk>\n"
+"Language-Team: Macedonian <mk@li.org>\n"
+"Language: mk\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#. module: esfsm_stock
+#: model:ir.model,name:esfsm_stock.model_esfsm_job_material
+msgid "Job Material Line"
+msgstr "Материјална линија на работа"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_esfsm_job_material__product_id
+msgid "Product"
+msgstr "Производ"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_esfsm_job_material__planned_qty
+msgid "Planned Quantity"
+msgstr "Планирана количина"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_esfsm_job_material__taken_qty
+msgid "Taken Quantity"
+msgstr "Земена количина"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_esfsm_job_material__used_qty
+msgid "Used Quantity"
+msgstr "Искористена количина"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_esfsm_job_material__returned_qty
+msgid "Returned Quantity"
+msgstr "Вратена количина"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_esfsm_job_material__lot_id
+msgid "Lot/Serial Number"
+msgstr "Лот/Сериски број"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_esfsm_job_material__price_unit
+msgid "Unit Price"
+msgstr "Единечна цена"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_esfsm_job_material__price_subtotal
+msgid "Subtotal"
+msgstr "Вкупно"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_esfsm_job__material_ids
+msgid "Materials"
+msgstr "Материјали"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_esfsm_job__material_count
+msgid "Material Count"
+msgstr "Број на материјали"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_esfsm_job__material_total
+msgid "Material Total"
+msgstr "Вкупно материјали"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_esfsm_team__vehicle_id
+msgid "Vehicle"
+msgstr "Возило"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_esfsm_team__stock_location_id
+msgid "Stock Location"
+msgstr "Складишна локација"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_fleet_vehicle__stock_location_id
+msgid "Material Location"
+msgstr "Локација на материјали"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_hr_employee__vehicle_id
+msgid "Assigned Vehicle"
+msgstr "Доделено возило"
+
+#. module: esfsm_stock
+#: model:ir.model.fields,field_description:esfsm_stock.field_stock_picking__esfsm_job_id
+msgid "FSM Job"
+msgstr "Теренска работа"
+
+#. module: esfsm_stock
+#: model:ir.model,name:esfsm_stock.model_esfsm_return_material_wizard
+msgid "Return Material Wizard"
+msgstr "Волшебник за враќање материјали"
+
+#. module: esfsm_stock
+#: model:ir.model,name:esfsm_stock.model_esfsm_add_material_wizard
+msgid "Add Material Wizard"
+msgstr "Волшебник за додавање материјали"
+
+#. module: esfsm_stock
+#: model_terms:ir.ui.view,arch_db:esfsm_stock.esfsm_job_view_form
+msgid "Return Unused Materials"
+msgstr "Врати неискористени материјали"
+
+#. module: esfsm_stock
+#: model_terms:ir.ui.view,arch_db:esfsm_stock.esfsm_job_view_form
+msgid "Add Extra Materials"
+msgstr "Додади дополнителни материјали"
+
+#. module: esfsm_stock
+#: code:addons/esfsm_stock/wizards/esfsm_return_material_wizard.py:0
+#, python-format
+msgid "Returned %s units of %s to warehouse"
+msgstr "Вратени %s единици од %s во магацин"
+
+#. module: esfsm_stock
+#: code:addons/esfsm_stock/wizards/esfsm_add_material_wizard.py:0
+#, python-format
+msgid "Extra materials added: %s x%s"
+msgstr "Додадени дополнителни материјали: %s x%s"
+
+#. module: esfsm_stock
+#: code:addons/esfsm_stock/models/esfsm_job_material.py:0
+#, python-format
+msgid "Used quantity (%s) cannot exceed taken quantity (%s)"
+msgstr "Искористената количина (%s) не може да биде поголема од земената (%s)"
+
+#. module: esfsm_stock
+#: code:addons/esfsm_stock/models/esfsm_job_material.py:0
+#, python-format
+msgid "Returned quantity exceeds available quantity"
+msgstr "Вратената количина ја надминува достапната"
+
+#. module: esfsm_stock
+#: model:stock.location,name:esfsm_stock.stock_location_vehicles
+msgid "Vehicles"
+msgstr "Возила"
