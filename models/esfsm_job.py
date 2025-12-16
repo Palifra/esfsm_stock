@@ -164,6 +164,7 @@ class EsfsmJob(models.Model):
             'type': 'ir.actions.act_window',
             'res_model': 'esfsm.add.material.wizard',
             'view_mode': 'form',
+            'views': [(False, 'form')],
             'target': 'new',
             'context': {'default_job_id': self.id},
         }
@@ -176,6 +177,7 @@ class EsfsmJob(models.Model):
             'type': 'ir.actions.act_window',
             'res_model': 'esfsm.return.material.wizard',
             'view_mode': 'form',
+            'views': [(False, 'form')],
             'target': 'new',
             'context': {'default_job_id': self.id},
         }
@@ -188,6 +190,7 @@ class EsfsmJob(models.Model):
             'type': 'ir.actions.act_window',
             'res_model': 'esfsm.take.material.wizard',
             'view_mode': 'form',
+            'views': [(False, 'form')],
             'target': 'new',
             'context': {'default_job_id': self.id, 'active_id': self.id},
         }
@@ -200,6 +203,7 @@ class EsfsmJob(models.Model):
             'type': 'ir.actions.act_window',
             'res_model': 'esfsm.consume.material.wizard',
             'view_mode': 'form',
+            'views': [(False, 'form')],
             'target': 'new',
             'context': {'default_job_id': self.id, 'active_id': self.id},
         }

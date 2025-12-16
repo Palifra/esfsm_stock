@@ -14,12 +14,12 @@
                         <page string="Материјали за враќање">
                             <field name="line_ids" nolabel="1">
                                 <list editable="bottom" create="false" delete="false" no_open="1">
-                                    <field name="product_id" readonly="1"/>
-                                    <field name="lot_id" readonly="1" optional="show"/>
-                                    <field name="product_uom_id" readonly="1" groups="uom.group_uom"/>
-                                    <field name="available_qty" readonly="1"/>
+                                    <field name="material_line_id" column_invisible="1" force_save="1"/>
+                                    <field name="product_id" readonly="1" force_save="1"/>
+                                    <field name="lot_id" readonly="1" optional="show" force_save="1"/>
+                                    <field name="product_uom_id" readonly="1" groups="uom.group_uom" force_save="1"/>
+                                    <field name="available_qty" readonly="1" force_save="1"/>
                                     <field name="return_qty"/>
-                                    <field name="material_line_id" column_invisible="1"/>
                                 </list>
                             </field>
                         </page>
@@ -135,15 +135,15 @@
                         <page string="Материјали за потрошувачка">
                             <field name="line_ids" nolabel="1">
                                 <list editable="bottom" create="false" delete="false" no_open="1">
-                                    <field name="product_id" readonly="1"/>
-                                    <field name="lot_id" readonly="1" optional="show"/>
-                                    <field name="product_uom_id" readonly="1" groups="uom.group_uom"/>
-                                    <field name="taken_qty" readonly="1"/>
-                                    <field name="already_used_qty" readonly="1"/>
-                                    <field name="already_returned_qty" readonly="1"/>
-                                    <field name="available_to_consume" readonly="1"/>
+                                    <field name="material_line_id" column_invisible="1" force_save="1"/>
+                                    <field name="product_id" readonly="1" force_save="1"/>
+                                    <field name="lot_id" readonly="1" optional="show" force_save="1"/>
+                                    <field name="product_uom_id" readonly="1" groups="uom.group_uom" force_save="1"/>
+                                    <field name="taken_qty" readonly="1" force_save="1"/>
+                                    <field name="already_used_qty" readonly="1" force_save="1"/>
+                                    <field name="already_returned_qty" readonly="1" force_save="1"/>
+                                    <field name="available_to_consume" readonly="1" force_save="1"/>
                                     <field name="consume_qty"/>
-                                    <field name="material_line_id" column_invisible="1"/>
                                 </list>
                             </field>
                         </page>
@@ -166,6 +166,7 @@
         <field name="name">Превземи материјали</field>
         <field name="res_model">esfsm.take.material.wizard</field>
         <field name="view_mode">form</field>
+        <field name="view_id" ref="esfsm_take_material_wizard_view_form"/>
         <field name="target">new</field>
         <field name="binding_model_id" ref="esfsm.model_esfsm_job"/>
         <field name="binding_view_types">form</field>
@@ -176,6 +177,7 @@
         <field name="name">Потроши материјали</field>
         <field name="res_model">esfsm.consume.material.wizard</field>
         <field name="view_mode">form</field>
+        <field name="view_id" ref="esfsm_consume_material_wizard_view_form"/>
         <field name="target">new</field>
         <field name="binding_model_id" ref="esfsm.model_esfsm_job"/>
         <field name="binding_view_types">form</field>
