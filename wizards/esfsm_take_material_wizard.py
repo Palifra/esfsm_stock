@@ -125,6 +125,23 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
         res['line_ids'] = lines
         return res
 
+    def _pick_primary_lot(self, picking, product):
+        """Return the lot with the largest contributed qty for a product in a picking.
+
+        Odoo auto-reserves lots during action_assign(). This picks the dominant
+        lot so we can back-fill esfsm.job.material.lot_id. For multi-lot takes,
+        the lot with largest qty wins (trade-off until lot_ids Many2many lands).
+        """
+        move_lines = picking.move_line_ids.filtered(
+            lambda ml: ml.product_id == product and ml.lot_id
+        )
+        if not move_lines:
+            return False
+        lot_qtys = {}
+        for ml in move_lines:
+            lot_qtys[ml.lot_id] = lot_qtys.get(ml.lot_id, 0.0) + ml.quantity
+        return max(lot_qtys, key=lot_qtys.get).id
+
     def action_confirm(self):
         """Create Реверс picking for taken materials"""
         self.ensure_one()
@@ -198,11 +215,14 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
         picking = picking_service.create_reverse_picking(job, lines_to_take)
 
         # Update material lines taken_qty (bypass write() auto-picking)
+        # Also sync auto-reserved lot back to material.lot_id (fixes lot-tracking bug)
         for line in lines_to_take:
-            new_taken = line.material_line_id.taken_qty + line.take_qty
-            line.material_line_id.with_context(skip_auto_picking=True).write({
-                'taken_qty': new_taken
-            })
+            material = line.material_line_id
+            new_taken = material.taken_qty + line.take_qty
+            vals = {'taken_qty': new_taken}
+            if not material.lot_id and material.product_id.tracking != 'none':
+                vals['lot_id'] = self._pick_primary_lot(picking, material.product_id)
+            line.material_line_id.with_context(skip_auto_picking=True).write(vals)
 
         # Post notification to job chatter if there were partial/missing materials
         if messages:
@@ -312,11 +332,13 @@ class EsfsmTakeMaterialWizardLine(models.TransientModel):
         picking_service = self.env['esfsm.stock.picking.service']
         picking = picking_service.create_reverse_picking(job, self)
 
-        # Update material line taken_qty
-        new_taken = self.material_line_id.taken_qty + self.take_qty
-        self.material_line_id.with_context(skip_auto_picking=True).write({
-            'taken_qty': new_taken
-        })
+        # Update material line taken_qty and sync auto-reserved lot
+        material = self.material_line_id
+        new_taken = material.taken_qty + self.take_qty
+        vals = {'taken_qty': new_taken}
+        if not material.lot_id and material.product_id.tracking != 'none':
+            vals['lot_id'] = self.wizard_id._pick_primary_lot(picking, material.product_id)
+        material.with_context(skip_auto_picking=True).write(vals)
 
         # Post to chatter
         job.message_post(

@@ -7,6 +7,10 @@
         <field name="arch" type="xml">
             <form string="Врати материјали">
                 <sheet>
+                    <div class="alert alert-warning" role="alert">
+                        <strong>&#x26A0; Внимание:</strong> Внесете ја <b>точната</b> количина за враќање.
+                        Полето е празно — мора рачно да ја внесете количината за секој материјал.
+                    </div>
                     <group>
                         <field name="job_id" readonly="1"/>
                     </group>
@@ -16,7 +20,10 @@
                                 <list editable="bottom" create="false" delete="false" no_open="1">
                                     <field name="material_line_id" column_invisible="1" force_save="1"/>
                                     <field name="product_id" readonly="1" force_save="1"/>
-                                    <field name="lot_id" readonly="1" optional="show" force_save="1"/>
+                                    <field name="product_tracking" column_invisible="1"/>
+                                    <field name="lot_id" optional="show"
+                                           required="product_tracking != 'none'"
+                                           invisible="product_tracking == 'none'"/>
                                     <field name="product_uom_id" readonly="1" groups="uom.group_uom" force_save="1"/>
                                     <field name="available_qty" readonly="1" force_save="1"/>
                                     <field name="return_qty"/>
@@ -128,6 +135,10 @@
         <field name="arch" type="xml">
             <form string="Потроши материјали">
                 <sheet>
+                    <div class="alert alert-warning" role="alert">
+                        <strong>&#x26A0; Внимание:</strong> Внесете ја <b>точната</b> количина што е потрошена.
+                        Полето „Потроши" е празно — мора рачно да ја внесете количината за секој материјал.
+                    </div>
                     <group>
                         <field name="job_id" readonly="1"/>
                     </group>
@@ -137,8 +148,12 @@
                                 <list editable="bottom" create="false" delete="false" no_open="1">
                                     <field name="material_line_id" column_invisible="1" force_save="1"/>
                                     <field name="product_id" readonly="1" force_save="1"/>
-                                    <field name="lot_id" readonly="1" optional="show" force_save="1"/>
+                                    <field name="product_tracking" column_invisible="1"/>
+                                    <field name="lot_id" optional="show"
+                                           required="product_tracking != 'none'"
+                                           invisible="product_tracking == 'none'"/>
                                     <field name="product_uom_id" readonly="1" groups="uom.group_uom" force_save="1"/>
+                                    <field name="planned_qty" readonly="1" string="План." force_save="1"/>
                                     <field name="taken_qty" readonly="1" force_save="1"/>
                                     <field name="already_used_qty" readonly="1" force_save="1"/>
                                     <field name="already_returned_qty" readonly="1" force_save="1"/>

@@ -50,7 +50,7 @@ class EsfsmReturnMaterialWizard(models.TransientModel):
                 'product_uom_id': material.product_uom_id.id,
                 'lot_id': material.lot_id.id if material.lot_id else False,
                 'available_qty': material.available_to_return_qty,
-                'return_qty': material.available_to_return_qty,  # Default to full return
+                'return_qty': 0.0,  # Корисникот МОРА да внесе количина
             }))
 
         res['line_ids'] = lines
@@ -117,8 +117,12 @@ class EsfsmReturnMaterialWizardLine(models.TransientModel):
     lot_id = fields.Many2one(
         'stock.lot',
         string='Лот/Сериски број',
-        readonly=True,
-        help='Лот или сериски број за производи со следење'
+        domain="[('product_id', '=', product_id)]",
+        help='Лот или сериски број за производи со следење. Задолжително за tracked производи.'
+    )
+    product_tracking = fields.Selection(
+        related='product_id.tracking',
+        string='Следење',
     )
     available_qty = fields.Float(
         string='Достапно',

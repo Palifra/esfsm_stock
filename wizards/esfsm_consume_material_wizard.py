@@ -47,7 +47,8 @@ class EsfsmConsumeMaterialWizard(models.TransientModel):
                     'already_used_qty': material.used_qty,
                     'already_returned_qty': material.returned_qty,
                     'available_to_consume': available_to_consume,
-                    'consume_qty': available_to_consume,  # Default: consume all available
+                    'planned_qty': material.planned_qty,
+                    'consume_qty': 0.0,  # Корисникот МОРА да внесе количина
                 }))
 
         res['line_ids'] = lines
@@ -60,6 +61,16 @@ class EsfsmConsumeMaterialWizard(models.TransientModel):
         lines_to_consume = self.line_ids.filtered(lambda l: l.consume_qty > 0)
         if not lines_to_consume:
             raise ValidationError(_('Нема материјали за потрошувачка.'))
+
+        # Validate consume qty doesn't exceed planned qty
+        for line in lines_to_consume:
+            material = line.material_line_id
+            total_used = material.used_qty + line.consume_qty
+            if total_used > material.planned_qty:
+                raise ValidationError(_(
+                    'Вкупно потрошено (%.2f) е поголемо од планираното (%.2f) за %s.\n'
+                    'Ако е намерно, прво зголемете ја планираната количина.'
+                ) % (total_used, material.planned_qty, material.product_id.name))
 
         job = self.job_id
 
@@ -142,7 +153,12 @@ class EsfsmConsumeMaterialWizardLine(models.TransientModel):
     lot_id = fields.Many2one(
         'stock.lot',
         string='Лот',
-        readonly=True,
+        domain="[('product_id', '=', product_id)]",
+        help='Лот/сериски број од кој се троши. Задолжително за производи со tracking=lot.',
+    )
+    product_tracking = fields.Selection(
+        related='product_id.tracking',
+        string='Следење',
     )
     taken_qty = fields.Float(
         string='Земено',
@@ -156,6 +172,11 @@ class EsfsmConsumeMaterialWizardLine(models.TransientModel):
     )
     already_returned_qty = fields.Float(
         string='Веќе вратено',
+        readonly=True,
+        digits='Product Unit of Measure',
+    )
+    planned_qty = fields.Float(
+        string='Планирано',
         readonly=True,
         digits='Product Unit of Measure',
     )
