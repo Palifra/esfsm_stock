@@ -60,6 +60,40 @@ class ResConfigSettings(models.TransientModel):
             'name': _('Resolve Ambiguous Lot Allocations'),
         }
 
+    def action_phase3_ambiguous_report(self):
+        """Shortage classification report for all remaining ambiguous combos."""
+        self.ensure_one()
+        report = self.env['esfsm.lot.allocation.migration'].format_ambiguous_report()
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': _('Ambiguous Combo Analysis'),
+                'message': report,
+                'type': 'info',
+                'sticky': True,
+            },
+        }
+
+    def action_phase3_bulk_gap_shortage(self):
+        """Bulk-mark all combos with shortage or no lot history as gap.
+        Leaves resolvable combos (exact + surplus) for manual wizard."""
+        self.ensure_one()
+        result = self.env['esfsm.lot.allocation.migration'].mark_shortage_combos_as_gap()
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': _('Bulk Gap Flagging DONE'),
+                'message': _('Flagged %(m)d materials as historical_gap '
+                             'across %(c)d combos.') % {
+                    'm': result['flagged'], 'c': result['combos'],
+                },
+                'type': 'success',
+                'sticky': True,
+            },
+        }
+
     def action_phase3_rollback(self):
         """Restore lot_id from JSON archive; delete all allocations. Destructive."""
         self.ensure_one()

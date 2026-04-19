@@ -306,6 +306,130 @@ class EsfsmLotAllocationMigration(models.AbstractModel):
             })
 
     # ──────────────────────────────────────────────
+    # Ambiguous-combo analysis (Phase 3 post-commit)
+    # ──────────────────────────────────────────────
+
+    @api.model
+    def classify_ambiguous_by_shortage(self):
+        """Split remaining ambiguous combos into 3 buckets based on whether
+        the picking lot history can cover the total material_taken.
+
+        Returns:
+          {
+            'resolvable_exact':    [...],  # sum_lot == sum_taken (can fully distribute)
+            'resolvable_surplus':  [...],  # sum_lot > sum_taken (more lots than needed)
+            'shortage':            [...],  # sum_lot < sum_taken (must mark as gap)
+            'no_lot_history':      [...],  # sum_lot == 0 (no picking data at all)
+          }
+        Each entry: {
+            'job_id', 'product_id', 'job_name', 'product_code',
+            'material_ids', 'total_taken', 'total_lot', 'shortage',
+        }
+        """
+        stats = self._classify_materials()
+        Material = self.env['esfsm.job.material']
+        Job = self.env['esfsm.job']
+        Product = self.env['product.product']
+
+        buckets = {
+            'resolvable_exact': [],
+            'resolvable_surplus': [],
+            'shortage': [],
+            'no_lot_history': [],
+        }
+
+        for combo in stats['ambiguous']:
+            materials = Material.browse(combo['material_ids'])
+            # Skip already-resolved combos
+            if all(m.lot_allocation_ids or m.lot_allocation_historical_gap
+                   for m in materials):
+                continue
+            lot_qtys = self._get_picking_lot_qtys(materials[:1])
+            total_taken = sum(materials.mapped('taken_qty'))
+            total_lot = sum(lot_qtys.values())
+            rounding = materials[0].product_uom_id.rounding or 0.001
+            cmp = __import__('odoo').tools.float_compare(
+                total_lot, total_taken, precision_rounding=rounding)
+
+            entry = {
+                'job_id': combo['job_id'],
+                'job_name': Job.browse(combo['job_id']).name,
+                'product_id': combo['product_id'],
+                'product_code': Product.browse(combo['product_id']).default_code or '',
+                'material_ids': combo['material_ids'],
+                'material_count': len(materials),
+                'total_taken': total_taken,
+                'total_lot': total_lot,
+                'shortage': max(total_taken - total_lot, 0.0),
+                'lot_count': len(lot_qtys),
+            }
+            if total_lot == 0:
+                buckets['no_lot_history'].append(entry)
+            elif cmp == 0:
+                buckets['resolvable_exact'].append(entry)
+            elif cmp > 0:
+                buckets['resolvable_surplus'].append(entry)
+            else:
+                buckets['shortage'].append(entry)
+
+        return buckets
+
+    @api.model
+    def format_ambiguous_report(self):
+        """Formatted human-readable report of all remaining ambiguous combos."""
+        buckets = self.classify_ambiguous_by_shortage()
+        lines = ['=' * 70,
+                 'AMBIGUOUS COMBOS — SHORTAGE CLASSIFICATION',
+                 '=' * 70]
+        for label, entries in [
+            ('RESOLVABLE — EXACT MATCH (sum_lot == sum_taken)', buckets['resolvable_exact']),
+            ('RESOLVABLE — SURPLUS (sum_lot > sum_taken)', buckets['resolvable_surplus']),
+            ('SHORTAGE (must Mark as Gap)', buckets['shortage']),
+            ('NO LOT HISTORY (must Mark as Gap)', buckets['no_lot_history']),
+        ]:
+            lines.append('')
+            lines.append(f'[{label}] — {len(entries)} combos')
+            for e in sorted(entries, key=lambda x: -x['shortage'])[:10]:
+                lines.append(
+                    f"  {e['job_name']} × {e['product_code']}: "
+                    f"{e['material_count']} mats, taken={e['total_taken']:.1f}, "
+                    f"lot={e['total_lot']:.1f}, shortage={e['shortage']:.1f}, "
+                    f"lots={e['lot_count']}"
+                )
+            if len(entries) > 10:
+                lines.append(f'  ... and {len(entries) - 10} more')
+        total_shortage = sum(e['shortage'] for e in buckets['shortage']) \
+                       + sum(e['total_taken'] for e in buckets['no_lot_history'])
+        lines.append('')
+        lines.append(f'[TOTAL UNBACKED QUANTITY (must gap)] {total_shortage:.1f}')
+        lines.append('=' * 70)
+        return '\n'.join(lines)
+
+    @api.model
+    def mark_shortage_combos_as_gap(self):
+        """Bulk-mark all combos with shortage>0 or no lot history as gap.
+        Safe: leaves resolvable combos (exact + surplus) for manual wizard."""
+        buckets = self.classify_ambiguous_by_shortage()
+        targets = buckets['shortage'] + buckets['no_lot_history']
+        Material = self.env['esfsm.job.material']
+        flagged = 0
+        for entry in targets:
+            for mid in entry['material_ids']:
+                material = Material.browse(mid)
+                if material.lot_allocation_ids or material.lot_allocation_historical_gap:
+                    continue
+                self._snapshot_legacy(material)
+                material.with_context(skip_allocation_sum_check=True).write({
+                    'lot_allocation_historical_gap': True,
+                })
+                flagged += 1
+        _logger.warning(
+            'Bulk-marked %s materials as historical_gap across %s combos',
+            flagged, len(targets),
+        )
+        return {'flagged': flagged, 'combos': len(targets)}
+
+    # ──────────────────────────────────────────────
     # Rollback
     # ──────────────────────────────────────────────
 
