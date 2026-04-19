@@ -5,33 +5,49 @@
         <field name="model">esfsm.lot.resolution.wizard</field>
         <field name="arch" type="xml">
             <form string="Resolution на lot allocation">
-                <header>
+                <sheet>
                     <div class="alert alert-warning" role="alert">
                         <strong>Внимание:</strong> Овој combo има повеќе material линии за
-                        ист производ. Распределете ги лотовите по линии. Сумата мора да
-                        се совпадне со taken_qty на секоја ставка.
+                        ист производ. Распределете ги лотовите по линии — сумата по материјал
+                        мора да се совпадне со taken_qty. Ако picking history не е доволен
+                        (види „Недостаток"), употребете „Mark as Gap".
                     </div>
-                </header>
-                <sheet>
                     <group>
-                        <field name="job_id" readonly="1"/>
-                        <field name="product_id" readonly="1"/>
-                        <field name="remaining_combos" readonly="1"/>
+                        <group>
+                            <field name="job_id" readonly="1"/>
+                            <field name="product_id" readonly="1"/>
+                            <field name="remaining_combos" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="total_material_taken" readonly="1"/>
+                            <field name="total_lot_qty" readonly="1"/>
+                            <field name="shortage" readonly="1"
+                                   decoration-danger="shortage &gt; 0"/>
+                        </group>
                     </group>
-                    <field name="line_ids">
-                        <list editable="bottom">
-                            <field name="material_id"/>
-                            <field name="material_taken_qty" readonly="1"/>
-                            <field name="lot_id" readonly="1"/>
-                            <field name="lot_total_qty" readonly="1"/>
+                    <field name="material_ids" invisible="1"/>
+                    <field name="line_ids" nolabel="1">
+                        <list editable="bottom" create="false" delete="false" no_open="1">
+                            <field name="material_id" readonly="1" force_save="1"/>
+                            <field name="material_taken_qty" readonly="1" force_save="1"/>
+                            <field name="lot_id" readonly="1" force_save="1"/>
+                            <field name="lot_total_qty" readonly="1" force_save="1"/>
                             <field name="qty"/>
                         </list>
                     </field>
                 </sheet>
                 <footer>
                     <button name="action_resolve" type="object" string="Resolve"
-                            class="btn-primary"/>
-                    <button string="Откажи" special="cancel" class="btn-secondary"/>
+                            class="btn-primary"
+                            invisible="shortage &gt; 0"
+                            help="Создај allocations од внесените количини. Сумата по материјал мора да се совпадне со taken_qty."/>
+                    <button name="action_mark_as_gap" type="object" string="Mark as Gap"
+                            class="btn-warning"
+                            confirm="Сигурни сте? Сите материјали во овој combo ќе бидат маркирани како historical_gap без lot allocations."/>
+                    <button name="action_skip" type="object" string="Skip"
+                            class="btn-secondary"
+                            help="Премини на следниот combo без промени. Овој ќе се појави повторно."/>
+                    <button string="Затвори" special="cancel" class="btn-secondary"/>
                 </footer>
             </form>
         </field>

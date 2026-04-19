@@ -127,7 +127,14 @@ class EsfsmLotAllocationMigration(models.AbstractModel):
     @api.model
     def _get_picking_lot_qtys(self, material):
         """Return {lot_id: qty} aggregated from done pickings on this job
-        for the material's product. Returns empty dict if no history."""
+        for the material's product. Keyed by (job_id, product_id) — all
+        materials sharing these keys receive the same result, so callers
+        in ambiguous combos must call this ONCE per combo (not per material)
+        to avoid N× amplification.
+
+        Accepts either a single record or a recordset (uses first)."""
+        if hasattr(material, 'ensure_one') and len(material) > 1:
+            material = material[:1]
         self.env.cr.execute("""
             SELECT sml.lot_id, SUM(sml.quantity)
             FROM stock_move_line sml
