@@ -2,6 +2,7 @@
 # Part of ESFSM Stock. See LICENSE file for full copyright and licensing details.
 
 from odoo import models, fields, _
+from odoo.exceptions import UserError
 
 
 class StockPickingService(models.AbstractModel):
@@ -62,16 +63,27 @@ class StockPickingService(models.AbstractModel):
     def _handle_lot_tracking(self, move, lot_id):
         """
         Handle lot/serial number tracking for a stock move.
-        
+
+        Distinguishes two cases correctly (fixes #3):
+          - product.tracking == 'none': lot irrelevant, just set qty.
+          - product.tracking in ('lot', 'serial'): lot MUST be provided;
+            raises UserError if missing (defense-in-depth — prevents future
+            regressions where callers forget to pass the lot).
+
         Args:
             move: stock.move record
             lot_id: stock.lot record or False
         """
-        if not lot_id:
-            # Non-lot tracked products
+        if move.product_id.tracking == 'none':
             move.quantity = move.product_uom_qty
             return
-        
+
+        if not lot_id:
+            raise UserError(_(
+                'Производ "%s" бара лот/сериски број, но не е наведен. '
+                'Проверете ја материјалната линија или визардот.'
+            ) % move.product_id.name)
+
         # For lot-tracked products, set lot on move lines
         if move.move_line_ids:
             for move_line in move.move_line_ids:

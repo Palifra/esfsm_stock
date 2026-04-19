@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="res_config_settings_view_form_esfsm_stock" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.esfsm.stock</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="base.res_config_settings_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//form" position="inside">
+                <app data-string="ESFSM Stock" string="ESFSM Stock"
+                     name="esfsm_stock" groups="esfsm.group_esfsm_manager">
+                    <block title="Lot Allocation" name="lot_allocation_section">
+                        <setting id="per_lot_allocations_enabled"
+                                 string="Алокации по лот"
+                                 help="Вклучи писменo во новиот sub-model за повеќе-лот алокација">
+                            <field name="esfsm_per_lot_allocations_enabled"/>
+                        </setting>
+                        <setting string="Phase 3 Migration"
+                                 help="Дry run или commit на historical data migration">
+                            <div class="mt16">
+                                <button name="action_phase3_dry_run" type="object"
+                                        string="Dry Run" class="btn-secondary"/>
+                                <button name="action_phase3_migrate_commit" type="object"
+                                        string="Commit Migration" class="btn-primary"
+                                        confirm="Ова ќе создаде allocations и gap flags врз основа на historical data. Сигурни сте?"/>
+                                <button name="action_phase3_resolve_ambiguous" type="object"
+                                        string="Resolve Ambiguous" class="btn-secondary"/>
+                                <button name="action_phase3_ambiguous_report" type="object"
+                                        string="Shortage Report" class="btn-secondary"/>
+                                <button name="action_phase3_bulk_gap_shortage" type="object"
+                                        string="Bulk Gap Shortage Combos" class="btn-warning"
+                                        confirm="Ова автоматски ќе ги маркира како historical_gap сите ambiguous combos каде picking history не е доволна за taken_qty. Rollback-аат се преку JSON archive."/>
+                                <button name="action_phase3_bulk_gap_all" type="object"
+                                        string="Bulk Gap ALL Ambiguous" class="btn-warning"
+                                        confirm="Ова ќе ги маркира како historical_gap СИТЕ останати ambiguous combos (вклучувајќи surplus). Користи ако податоците се целосно исторически (pre lot-tracking). Rollback-аат се преку JSON archive."/>
+                                <button name="action_phase3_rollback" type="object"
+                                        string="Rollback" class="btn-danger"
+                                        confirm="ОПАСНО: Ова ќе ги избрише сите allocations и ќе го врати lot_id. Сигурни?"/>
+                            </div>
+                        </setting>
+                    </block>
+                </app>
+            </xpath>
+        </field>
+    </record>
+</odoo>

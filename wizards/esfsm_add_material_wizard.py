@@ -67,6 +67,24 @@ class EsfsmAddMaterialWizard(models.TransientModel):
         source_location = picking_type.default_location_src_id or self.env.ref('stock.stock_location_stock')
         dest_location = job._get_source_location()
 
+        # Read feature flag once per wizard action
+        per_lot = self.env['esfsm.job.material']._is_per_lot_enabled()
+
+        # Validate stock availability before creating picking
+        for line in self.line_ids:
+            if line.qty <= 0:
+                continue
+            quants = self.env['stock.quant'].search([
+                ('product_id', '=', line.product_id.id),
+                ('location_id', 'child_of', source_location.id),
+                ('quantity', '>', 0),
+            ])
+            available = sum(quants.mapped('quantity'))
+            if line.qty > available:
+                raise ValidationError(_(
+                    'Нема доволно залиха за %s: потребно %.2f, достапно %.2f'
+                ) % (line.product_id.name, line.qty, available))
+
         # Create picking with Реверс type and technician name
         picking = self.env['stock.picking'].create({
             'picking_type_id': picking_type.id,
@@ -93,11 +111,20 @@ class EsfsmAddMaterialWizard(models.TransientModel):
                 )
 
             if existing_material:
-                # Update existing line - add to taken_qty
-                existing_material[0].taken_qty += line.qty
+                # Update existing line - add to both planned_qty and taken_qty
+                material_ctx = existing_material[0].with_context(
+                    skip_auto_picking=True,
+                    skip_allocation_sum_check=True,
+                )
+                material_ctx.write({
+                    'planned_qty': material_ctx.planned_qty + line.qty,
+                    'taken_qty': material_ctx.taken_qty + line.qty,
+                })
             else:
                 # Create new material line with lot
-                self.env['esfsm.job.material'].create({
+                material_ctx = self.env['esfsm.job.material'].with_context(
+                    skip_allocation_sum_check=True,
+                ).create({
                     'job_id': job.id,
                     'product_id': line.product_id.id,
                     'product_uom_id': line.product_uom_id.id,
@@ -106,6 +133,10 @@ class EsfsmAddMaterialWizard(models.TransientModel):
                     'taken_qty': line.qty,
                     'lot_id': line.lot_id.id if line.lot_id else False,
                 })
+            # Phase 2 dual-write: explicit lot allocation (user-selected lot in Add wizard)
+            material_ctx._sync_allocation_on_take_explicit(
+                line.lot_id, line.qty, per_lot_enabled=per_lot,
+            )
 
             # Create stock move
             move = self.env['stock.move'].create({

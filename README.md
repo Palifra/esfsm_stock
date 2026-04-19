@@ -23,6 +23,33 @@ Track materials through their complete lifecycle:
 3. **Искористено** (Used) - Materials consumed on the job site
 4. **Вратено** (Returned) - Unused materials returned to warehouse
 
+### 🏷️ Per-Lot Allocation Tracking (NEW in 18.0.1.8.0)
+
+Materials drawn from lot-tracked products (cables, batches) now maintain
+per-lot accounting through the entire lifecycle — not just a single
+"primary lot" pointer. Each material line can have N allocations, one per
+(material × lot) pair, with independent taken/used/returned quantities.
+
+**Features:**
+- Sub-model `esfsm.job.material.lot` with `taken_qty`, `used_qty`,
+  `returned_qty` per lot — automatically kept in sync with picking history.
+- FEFO distribution for consume/return — consumes the lot with earliest
+  expiration (or creation) date first.
+- Feature flag `esfsm_stock.per_lot_allocations_enabled` for staged rollout.
+- Daily drift detection cron that flags mismatches between material
+  scalars and allocation sums.
+- Phase 3 migration engine with dry-run, classifier, resolution wizard,
+  and JSON-archive rollback.
+- API v3 `lot_allocations[]` alongside legacy `lot_id` for backward
+  compatibility with existing mobile clients.
+
+**Consume/Return wizards now show one row per (material, lot)** — user
+enters the consumed/returned quantity per lot directly. Historical gap
+materials (pre-lot-tracking data) keep the legacy one-row-per-material UI.
+
+See `docs/LOT_ALLOCATION.md` for architecture and `docs/MIGRATION_GUIDE.md`
+for operator deployment steps.
+
 ### 🎯 Smart Location Priority
 Automatic source location detection with priority:
 1. **Team Vehicle** (highest priority)
