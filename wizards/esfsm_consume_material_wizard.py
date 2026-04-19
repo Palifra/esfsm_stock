@@ -3,6 +3,7 @@
 
 from odoo import api, models, fields, _
 from odoo.exceptions import ValidationError
+from odoo.tools import float_compare
 
 
 class EsfsmConsumeMaterialWizard(models.TransientModel):
@@ -23,7 +24,10 @@ class EsfsmConsumeMaterialWizard(models.TransientModel):
 
     @api.model
     def default_get(self, fields_list):
-        """Pre-populate wizard with consumable materials"""
+        """Phase 4: per-allocation flat list.
+        - Tracked materials with allocations → one row per (material, allocation)
+        - Historical gap or untracked materials → one row per material (legacy fallback)
+        """
         res = super().default_get(fields_list)
 
         job_id = self.env.context.get('active_id')
@@ -33,82 +37,130 @@ class EsfsmConsumeMaterialWizard(models.TransientModel):
         job = self.env['esfsm.job'].browse(job_id)
         res['job_id'] = job_id
 
-        # Find materials that can be consumed (taken > used + returned)
         lines = []
         for material in job.material_ids:
-            available_to_consume = material.taken_qty - material.used_qty - material.returned_qty
-            if available_to_consume > 0:
+            total_available = (material.taken_qty - material.used_qty
+                               - material.returned_qty)
+            if total_available <= 0:
+                continue
+
+            # Case A: tracked material with allocations → per-allocation rows
+            if material.lot_allocation_ids:
+                for alloc in material.lot_allocation_ids:
+                    avail = alloc.available_to_consume_qty
+                    if avail <= 0:
+                        continue
+                    lines.append((0, 0, {
+                        'material_line_id': material.id,
+                        'allocation_id': alloc.id,
+                        'product_id': material.product_id.id,
+                        'product_uom_id': material.product_uom_id.id,
+                        'lot_id': alloc.lot_id.id,
+                        'taken_qty': alloc.taken_qty,
+                        'already_used_qty': alloc.used_qty,
+                        'already_returned_qty': alloc.returned_qty,
+                        'available_to_consume': avail,
+                        'planned_qty': material.planned_qty,
+                        'consume_qty': 0.0,
+                    }))
+            else:
+                # Case B: legacy / historical-gap / untracked → 1 row per material
                 lines.append((0, 0, {
                     'material_line_id': material.id,
+                    'allocation_id': False,
                     'product_id': material.product_id.id,
                     'product_uom_id': material.product_uom_id.id,
                     'lot_id': material.lot_id.id if material.lot_id else False,
                     'taken_qty': material.taken_qty,
                     'already_used_qty': material.used_qty,
                     'already_returned_qty': material.returned_qty,
-                    'available_to_consume': available_to_consume,
+                    'available_to_consume': total_available,
                     'planned_qty': material.planned_qty,
-                    'consume_qty': 0.0,  # Корисникот МОРА да внесе количина
+                    'consume_qty': 0.0,
                 }))
 
         res['line_ids'] = lines
         return res
 
     def action_confirm(self):
-        """Create Испратница picking for consumed materials"""
+        """Create Испратница picking and update allocations + material scalars."""
         self.ensure_one()
 
         lines_to_consume = self.line_ids.filtered(lambda l: l.consume_qty > 0)
         if not lines_to_consume:
             raise ValidationError(_('Нема материјали за потрошувачка.'))
 
-        # Validate consume qty doesn't exceed planned qty
+        # Group by material for planned_qty validation + scalar rebuild
+        material_deltas = {}  # material_id → total consume this action
         for line in lines_to_consume:
-            material = line.material_line_id
-            total_used = material.used_qty + line.consume_qty
-            if total_used > material.planned_qty:
+            mid = line.material_line_id.id
+            material_deltas[mid] = material_deltas.get(mid, 0.0) + line.consume_qty
+
+        for mid, delta in material_deltas.items():
+            material = self.env['esfsm.job.material'].browse(mid)
+            total_used = material.used_qty + delta
+            rounding = material._rounding()
+            if float_compare(total_used, material.planned_qty,
+                             precision_rounding=rounding) > 0:
                 raise ValidationError(_(
-                    'Вкупно потрошено (%.2f) е поголемо од планираното (%.2f) за %s.\n'
-                    'Ако е намерно, прво зголемете ја планираната количина.'
-                ) % (total_used, material.planned_qty, material.product_id.name))
+                    'Вкупно потрошено (%(total).2f) е поголемо од планираното '
+                    '(%(planned).2f) за %(product)s.',
+                    total=total_used, planned=material.planned_qty,
+                    product=material.product_id.name,
+                ))
 
         job = self.job_id
-
-        # Use StockPickingService to create picking
         picking_service = self.env['esfsm.stock.picking.service']
         picking = picking_service.create_delivery_picking(job, lines_to_consume)
 
-        # Read feature flag once per wizard action
         per_lot = self.env['esfsm.job.material']._is_per_lot_enabled()
 
-        # Update material lines used_qty (bypass write() auto-picking)
-        # Phase 2 dual-write: also distribute consume across lot_allocation_ids
+        # Write per-allocation first, then rebuild material scalar
+        touched_materials = set()
         for line in lines_to_consume:
-            material_ctx = line.material_line_id.with_context(
-                skip_auto_picking=True,
-                skip_allocation_sum_check=True,
-            )
-            new_used = material_ctx.used_qty + line.consume_qty
-            material_ctx.write({'used_qty': new_used})
-            material_ctx._sync_allocation_on_consume(
-                line.consume_qty,
-                lot=line.lot_id or None,
-                per_lot_enabled=per_lot,
-            )
+            material = line.material_line_id
+            touched_materials.add(material.id)
+            if line.allocation_id:
+                # Allocation-based consume
+                line.allocation_id.with_context(
+                    skip_allocation_sum_check=True,
+                ).used_qty = line.allocation_id.used_qty + line.consume_qty
+            # Material scalar is rebuilt from allocations (below) OR
+            # updated directly for gap / untracked materials
+            if not material.lot_allocation_ids and not line.allocation_id:
+                # Legacy / gap path: material scalar += consume (no allocations)
+                material.with_context(
+                    skip_auto_picking=True,
+                    skip_allocation_sum_check=True,
+                ).used_qty = material.used_qty + line.consume_qty
 
-        # Check if there are materials to return
+        # Rebuild material scalars from allocation sums (Phase 4 source-of-truth)
+        Material = self.env['esfsm.job.material']
+        for mid in touched_materials:
+            material = Material.browse(mid)
+            if material.lot_allocation_ids:
+                total_used = sum(material.lot_allocation_ids.mapped('used_qty'))
+                material.with_context(
+                    skip_auto_picking=True,
+                    skip_allocation_sum_check=True,
+                ).used_qty = total_used
+
+        # Validate sums match after write (final integrity check)
+        for mid in touched_materials:
+            Material.browse(mid)._validate_allocation_sums()
+
+        # Continue-to-return check
         remaining = sum(
             m.taken_qty - m.used_qty - m.returned_qty
             for m in job.material_ids
         )
-
         if remaining > 0:
             return {
                 'type': 'ir.actions.client',
                 'tag': 'display_notification',
                 'params': {
                     'title': _('Успешно'),
-                    'message': _('Потрошено %d материјали. Остануваат %.2f за враќање.') % (
+                    'message': _('Потрошено %d ставки. Остануваат %.2f за враќање.') % (
                         len(lines_to_consume), remaining
                     ),
                     'type': 'warning',
@@ -132,44 +184,47 @@ class EsfsmConsumeMaterialWizard(models.TransientModel):
         }
 
 
-
 class EsfsmConsumeMaterialWizardLine(models.TransientModel):
     _name = 'esfsm.consume.material.wizard.line'
     _description = 'Линија за потрошувачка на материјал'
 
     wizard_id = fields.Many2one(
         'esfsm.consume.material.wizard',
-        string='Wizard',
         required=True,
         ondelete='cascade',
     )
     material_line_id = fields.Many2one(
         'esfsm.job.material',
-        string='Материјална линија',
+        string='Материјал',
         required=True,
         readonly=True,
     )
+    allocation_id = fields.Many2one(
+        'esfsm.job.material.lot',
+        string='Алокација',
+        readonly=True,
+        help='Ако е поставено, трошењето го ажурира овој allocation запис. '
+             'Ако е празно (historical gap), се ажурира само material.used_qty.',
+    )
     product_id = fields.Many2one(
         'product.product',
-        string='Производ',
         required=True,
         readonly=True,
     )
     product_uom_id = fields.Many2one(
         'uom.uom',
-        string='Мерна единица',
         required=True,
         readonly=True,
     )
     lot_id = fields.Many2one(
         'stock.lot',
         string='Лот',
+        readonly=True,
         domain="[('product_id', '=', product_id)]",
-        help='Лот/сериски број од кој се троши. Задолжително за производи со tracking=lot.',
     )
     product_tracking = fields.Selection(
         related='product_id.tracking',
-        string='Следење',
+        readonly=True,
     )
     taken_qty = fields.Float(
         string='Земено',
@@ -203,11 +258,16 @@ class EsfsmConsumeMaterialWizardLine(models.TransientModel):
 
     @api.constrains('consume_qty', 'available_to_consume')
     def _check_consume_qty(self):
-        """Validate consume quantity"""
         for line in self:
             if line.consume_qty < 0:
                 raise ValidationError(_('Количината не може да биде негативна.'))
-            if line.consume_qty > line.available_to_consume:
-                raise ValidationError(_(
-                    'Количината за потрошувачка (%s) не може да биде поголема од достапната (%s) за %s'
-                ) % (line.consume_qty, line.available_to_consume, line.product_id.name))
+            if line.material_line_id:
+                rounding = line.material_line_id._rounding()
+                if float_compare(line.consume_qty, line.available_to_consume,
+                                 precision_rounding=rounding) > 0:
+                    raise ValidationError(_(
+                        'Количината за потрошувачка (%(qty)s) не може да биде поголема '
+                        'од достапната (%(avail)s) за %(product)s',
+                        qty=line.consume_qty, avail=line.available_to_consume,
+                        product=line.product_id.name,
+                    ))

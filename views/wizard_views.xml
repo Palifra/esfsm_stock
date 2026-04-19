@@ -8,8 +8,8 @@
             <form string="Врати материјали">
                 <sheet>
                     <div class="alert alert-warning" role="alert">
-                        <strong>&#x26A0; Внимание:</strong> Внесете ја <b>точната</b> количина за враќање.
-                        Полето е празно — мора рачно да ја внесете количината за секој материјал.
+                        <strong>Внимание:</strong> Внесете ја <b>точната</b> количина за враќање
+                        за секој лот. Полето е празно — мора рачно да ја внесете.
                     </div>
                     <group>
                         <field name="job_id" readonly="1"/>
@@ -17,13 +17,12 @@
                     <notebook>
                         <page string="Материјали за враќање">
                             <field name="line_ids" nolabel="1">
-                                <list editable="bottom" create="false" delete="false" no_open="1">
+                                <list editable="bottom" create="false" delete="false" no_open="1" limit="20">
                                     <field name="material_line_id" column_invisible="1" force_save="1"/>
+                                    <field name="allocation_id" column_invisible="1" force_save="1"/>
                                     <field name="product_id" readonly="1" force_save="1"/>
                                     <field name="product_tracking" column_invisible="1"/>
-                                    <field name="lot_id" optional="show"
-                                           required="product_tracking != 'none'"
-                                           invisible="product_tracking == 'none'"/>
+                                    <field name="lot_id" readonly="1" optional="show" force_save="1"/>
                                     <field name="product_uom_id" readonly="1" groups="uom.group_uom" force_save="1"/>
                                     <field name="available_qty" readonly="1" force_save="1"/>
                                     <field name="return_qty"/>
@@ -136,8 +135,8 @@
             <form string="Потроши материјали">
                 <sheet>
                     <div class="alert alert-warning" role="alert">
-                        <strong>&#x26A0; Внимание:</strong> Внесете ја <b>точната</b> количина што е потрошена.
-                        Полето „Потроши" е празно — мора рачно да ја внесете количината за секој материјал.
+                        <strong>Внимание:</strong> Внесете ја <b>точната</b> количина што е потрошена
+                        за секој лот. Полето „Потроши" е празно — мора рачно да ја внесете.
                     </div>
                     <group>
                         <field name="job_id" readonly="1"/>
@@ -145,13 +144,12 @@
                     <notebook>
                         <page string="Материјали за потрошувачка">
                             <field name="line_ids" nolabel="1">
-                                <list editable="bottom" create="false" delete="false" no_open="1">
+                                <list editable="bottom" create="false" delete="false" no_open="1" limit="20">
                                     <field name="material_line_id" column_invisible="1" force_save="1"/>
+                                    <field name="allocation_id" column_invisible="1" force_save="1"/>
                                     <field name="product_id" readonly="1" force_save="1"/>
                                     <field name="product_tracking" column_invisible="1"/>
-                                    <field name="lot_id" optional="show"
-                                           required="product_tracking != 'none'"
-                                           invisible="product_tracking == 'none'"/>
+                                    <field name="lot_id" readonly="1" optional="show" force_save="1"/>
                                     <field name="product_uom_id" readonly="1" groups="uom.group_uom" force_save="1"/>
                                     <field name="planned_qty" readonly="1" string="План." force_save="1"/>
                                     <field name="taken_qty" readonly="1" force_save="1"/>
@@ -164,8 +162,8 @@
                         </page>
                     </notebook>
                     <div class="alert alert-info" role="alert">
-                        <strong>Информација:</strong> Внесете ја количината што е реално потрошена на работата.
-                        Остатокот ќе треба да се врати во магацин.
+                        <strong>Информација:</strong> Прикажан е секој лот одделно. Внесете ја количината
+                        реално потрошена од секој лот. Остатокот ќе треба да се врати во магацин.
                     </div>
                 </sheet>
                 <footer>
