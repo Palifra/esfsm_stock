@@ -3,6 +3,7 @@
 
 from odoo import api, fields, models, _
 from odoo.exceptions import ValidationError
+from odoo.tools import float_compare
 
 
 class EsfsmJobMaterialLot(models.Model):
@@ -96,25 +97,29 @@ class EsfsmJobMaterialLot(models.Model):
             line.available_to_consume_qty = remaining
             line.available_to_return_qty = remaining
 
+    def _rounding(self):
+        self.ensure_one()
+        return (self.material_id.product_uom_id.rounding
+                or self.product_uom_id.rounding
+                or 0.001)
+
     @api.constrains('used_qty', 'taken_qty')
     def _check_used_quantity(self):
         for line in self:
-            if line.used_qty > line.taken_qty:
+            if float_compare(line.used_qty, line.taken_qty,
+                             precision_rounding=line._rounding()) > 0:
                 raise ValidationError(_(
                     'Искористено (%(used)s) > земено (%(taken)s) за лот %(lot)s',
-                    used=line.used_qty,
-                    taken=line.taken_qty,
-                    lot=line.lot_id.name,
+                    used=line.used_qty, taken=line.taken_qty, lot=line.lot_id.name,
                 ))
 
     @api.constrains('returned_qty', 'taken_qty', 'used_qty')
     def _check_returned_quantity(self):
         for line in self:
             available = line.taken_qty - line.used_qty
-            if line.returned_qty > available:
+            if float_compare(line.returned_qty, available,
+                             precision_rounding=line._rounding()) > 0:
                 raise ValidationError(_(
                     'Вратено (%(ret)s) > достапно (%(avail)s) за лот %(lot)s',
-                    ret=line.returned_qty,
-                    avail=available,
-                    lot=line.lot_id.name,
+                    ret=line.returned_qty, avail=available, lot=line.lot_id.name,
                 ))

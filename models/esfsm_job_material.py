@@ -495,24 +495,36 @@ class EsfsmJobMaterial(models.Model):
 
     @api.constrains('used_qty', 'taken_qty')
     def _check_used_quantity(self):
-        """Validate that used quantity doesn't exceed taken quantity"""
+        """Validate that used quantity doesn't exceed taken quantity (UoM-rounded)."""
         for line in self:
-            if line.used_qty > line.taken_qty:
+            if not line.product_uom_id:
+                continue
+            rounding = line.product_uom_id.rounding or 0.001
+            if float_compare(line.used_qty, line.taken_qty,
+                             precision_rounding=rounding) > 0:
                 raise ValidationError(_(
-                    'Искористената количина (%s) не може да биде поголема од земената количина (%s) за %s'
-                ) % (line.used_qty, line.taken_qty, line.product_id.name))
+                    'Искористената количина (%(used)s) не може да биде поголема од '
+                    'земената количина (%(taken)s) за %(product)s',
+                    used=line.used_qty, taken=line.taken_qty,
+                    product=line.product_id.name,
+                ))
 
     @api.constrains('returned_qty', 'taken_qty', 'used_qty')
     def _check_returned_quantity(self):
-        """Validate that returned quantity doesn't exceed available"""
+        """Validate that returned quantity doesn't exceed available (UoM-rounded)."""
         for line in self:
-            # Only check if there's actually a returned quantity
-            if line.returned_qty > 0:
-                available = line.taken_qty - line.used_qty
-                if line.returned_qty > available:
-                    raise ValidationError(_(
-                        'Вратената количина (%s) не може да биде поголема од достапната (%s) за %s'
-                    ) % (line.returned_qty, available, line.product_id.name))
+            if not line.product_uom_id or line.returned_qty <= 0:
+                continue
+            rounding = line.product_uom_id.rounding or 0.001
+            available = line.taken_qty - line.used_qty
+            if float_compare(line.returned_qty, available,
+                             precision_rounding=rounding) > 0:
+                raise ValidationError(_(
+                    'Вратената количина (%(ret)s) не може да биде поголема од '
+                    'достапната (%(avail)s) за %(product)s',
+                    ret=line.returned_qty, avail=available,
+                    product=line.product_id.name,
+                ))
 
     def write(self, vals):
         """
