@@ -109,13 +109,19 @@ class EsfsmAddMaterialWizard(models.TransientModel):
 
             if existing_material:
                 # Update existing line - add to both planned_qty and taken_qty
-                existing_material[0].with_context(skip_auto_picking=True).write({
-                    'planned_qty': existing_material[0].planned_qty + line.qty,
-                    'taken_qty': existing_material[0].taken_qty + line.qty,
+                material = existing_material[0]
+                material.with_context(
+                    skip_auto_picking=True,
+                    skip_allocation_sum_check=True,
+                ).write({
+                    'planned_qty': material.planned_qty + line.qty,
+                    'taken_qty': material.taken_qty + line.qty,
                 })
             else:
                 # Create new material line with lot
-                self.env['esfsm.job.material'].create({
+                material = self.env['esfsm.job.material'].with_context(
+                    skip_allocation_sum_check=True,
+                ).create({
                     'job_id': job.id,
                     'product_id': line.product_id.id,
                     'product_uom_id': line.product_uom_id.id,
@@ -124,6 +130,8 @@ class EsfsmAddMaterialWizard(models.TransientModel):
                     'taken_qty': line.qty,
                     'lot_id': line.lot_id.id if line.lot_id else False,
                 })
+            # Phase 2 dual-write: explicit lot allocation (user-selected lot in Add wizard)
+            material._sync_allocation_on_take_explicit(line.lot_id, line.qty)
 
             # Create stock move
             move = self.env['stock.move'].create({
