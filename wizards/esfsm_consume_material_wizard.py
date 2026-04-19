@@ -78,16 +78,23 @@ class EsfsmConsumeMaterialWizard(models.TransientModel):
         picking_service = self.env['esfsm.stock.picking.service']
         picking = picking_service.create_delivery_picking(job, lines_to_consume)
 
+        # Read feature flag once per wizard action
+        per_lot = self.env['esfsm.job.material']._is_per_lot_enabled()
+
         # Update material lines used_qty (bypass write() auto-picking)
         # Phase 2 dual-write: also distribute consume across lot_allocation_ids
         for line in lines_to_consume:
-            material = line.material_line_id
-            new_used = material.used_qty + line.consume_qty
-            material.with_context(
+            material_ctx = line.material_line_id.with_context(
                 skip_auto_picking=True,
                 skip_allocation_sum_check=True,
-            ).write({'used_qty': new_used})
-            material._sync_allocation_on_consume(line.consume_qty, lot=line.lot_id or None)
+            )
+            new_used = material_ctx.used_qty + line.consume_qty
+            material_ctx.write({'used_qty': new_used})
+            material_ctx._sync_allocation_on_consume(
+                line.consume_qty,
+                lot=line.lot_id or None,
+                per_lot_enabled=per_lot,
+            )
 
         # Check if there are materials to return
         remaining = sum(

@@ -70,16 +70,23 @@ class EsfsmReturnMaterialWizard(models.TransientModel):
         picking_service = self.env['esfsm.stock.picking.service']
         picking = picking_service.create_return_picking(job, lines_to_return)
 
+        # Read feature flag once per wizard action
+        per_lot = self.env['esfsm.job.material']._is_per_lot_enabled()
+
         # Update material lines returned_qty (bypass write() warning)
         # Phase 2 dual-write: also distribute return across lot_allocation_ids
         for line in lines_to_return:
-            material = line.material_line_id
-            new_returned = material.returned_qty + line.return_qty
-            material.with_context(
+            material_ctx = line.material_line_id.with_context(
                 skip_auto_picking=True,
                 skip_allocation_sum_check=True,
-            ).write({'returned_qty': new_returned})
-            material._sync_allocation_on_return(line.return_qty, lot=line.lot_id or None)
+            )
+            new_returned = material_ctx.returned_qty + line.return_qty
+            material_ctx.write({'returned_qty': new_returned})
+            material_ctx._sync_allocation_on_return(
+                line.return_qty,
+                lot=line.lot_id or None,
+                per_lot_enabled=per_lot,
+            )
 
         return {
             'type': 'ir.actions.act_window',

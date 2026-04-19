@@ -67,6 +67,9 @@ class EsfsmAddMaterialWizard(models.TransientModel):
         source_location = picking_type.default_location_src_id or self.env.ref('stock.stock_location_stock')
         dest_location = job._get_source_location()
 
+        # Read feature flag once per wizard action
+        per_lot = self.env['esfsm.job.material']._is_per_lot_enabled()
+
         # Validate stock availability before creating picking
         for line in self.line_ids:
             if line.qty <= 0:
@@ -109,17 +112,17 @@ class EsfsmAddMaterialWizard(models.TransientModel):
 
             if existing_material:
                 # Update existing line - add to both planned_qty and taken_qty
-                material = existing_material[0]
-                material.with_context(
+                material_ctx = existing_material[0].with_context(
                     skip_auto_picking=True,
                     skip_allocation_sum_check=True,
-                ).write({
-                    'planned_qty': material.planned_qty + line.qty,
-                    'taken_qty': material.taken_qty + line.qty,
+                )
+                material_ctx.write({
+                    'planned_qty': material_ctx.planned_qty + line.qty,
+                    'taken_qty': material_ctx.taken_qty + line.qty,
                 })
             else:
                 # Create new material line with lot
-                material = self.env['esfsm.job.material'].with_context(
+                material_ctx = self.env['esfsm.job.material'].with_context(
                     skip_allocation_sum_check=True,
                 ).create({
                     'job_id': job.id,
@@ -131,7 +134,9 @@ class EsfsmAddMaterialWizard(models.TransientModel):
                     'lot_id': line.lot_id.id if line.lot_id else False,
                 })
             # Phase 2 dual-write: explicit lot allocation (user-selected lot in Add wizard)
-            material._sync_allocation_on_take_explicit(line.lot_id, line.qty)
+            material_ctx._sync_allocation_on_take_explicit(
+                line.lot_id, line.qty, per_lot_enabled=per_lot,
+            )
 
             # Create stock move
             move = self.env['stock.move'].create({

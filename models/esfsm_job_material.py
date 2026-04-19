@@ -1,8 +1,14 @@
 # -*- coding: utf-8 -*-
 # Part of ESFSM Stock. See LICENSE file for full copyright and licensing details.
 
+import logging
+from collections import defaultdict
+
 from odoo import api, models, fields, _
 from odoo.exceptions import ValidationError
+from odoo.tools import float_compare, float_is_zero
+
+_logger = logging.getLogger(__name__)
 
 
 class EsfsmJobMaterial(models.Model):
@@ -37,7 +43,7 @@ class EsfsmJobMaterial(models.Model):
         'product.product',
         string='Производ',
         required=True,
-        domain=[('type', 'in', ['consu', 'product'])],
+        domain=[('type', '=', 'consu')],
         help='Материјал/производ'
     )
     product_uom_id = fields.Many2one(
@@ -177,7 +183,11 @@ class EsfsmJobMaterial(models.Model):
     def _compute_primary_lot(self):
         for m in self:
             if m.lot_allocation_ids:
-                primary = max(m.lot_allocation_ids, key=lambda a: a.taken_qty)
+                # Deterministic: largest taken_qty, then lowest id for tie-break
+                primary = max(
+                    m.lot_allocation_ids,
+                    key=lambda a: (a.taken_qty, -a.id),
+                )
                 m.primary_lot_id = primary.lot_id
             elif m.lot_id:
                 # Fallback to legacy during Phase 2 transition
@@ -217,118 +227,235 @@ class EsfsmJobMaterial(models.Model):
 
     @api.model
     def _is_per_lot_enabled(self):
-        """Return True if per-lot allocation writes are enabled (Phase 2+)."""
+        """Return True if per-lot allocation writes are enabled (Phase 2+).
+        Meant to be called once per wizard action; callers should propagate the
+        boolean to sync methods via `per_lot_enabled` arg."""
         return self.env['ir.config_parameter'].sudo().get_param(
             'esfsm_stock.per_lot_allocations_enabled', 'False') == 'True'
 
-    def _sync_allocation_on_take(self, picking):
-        """After a take picking is validated, mirror its lot distribution
-        into lot_allocation_ids. Idempotent: increments existing allocations,
-        creates new ones per lot. Skipped if feature flag OFF or product untracked."""
+    def _rounding(self):
+        """UoM rounding for precision comparisons. Falls back to 0.001."""
         self.ensure_one()
-        if not self._is_per_lot_enabled():
+        return self.product_uom_id.rounding or 0.001
+
+    def _get_or_create_allocation(self, lot, initial_qty=0.0):
+        """Upsert an allocation for (self, lot). Handles the UNIQUE-violation race
+        by retrying inside a savepoint. Returns the allocation record."""
+        self.ensure_one()
+        existing = self.lot_allocation_ids.filtered(lambda a: a.lot_id == lot)
+        if existing:
+            return existing[0]
+        Allocation = self.env['esfsm.job.material.lot'].with_context(
+            skip_allocation_sum_check=True
+        )
+        try:
+            with self.env.cr.savepoint():
+                return Allocation.create({
+                    'material_id': self.id,
+                    'lot_id': lot.id,
+                    'taken_qty': initial_qty,
+                })
+        except Exception as e:
+            # Check if UNIQUE(material_id, lot_id) race — another tx created it first.
+            msg = str(e).lower()
+            if 'unique_material_lot' in msg or 'duplicate key' in msg:
+                self.invalidate_recordset(['lot_allocation_ids'])
+                existing = self.env['esfsm.job.material.lot'].search([
+                    ('material_id', '=', self.id),
+                    ('lot_id', '=', lot.id),
+                ], limit=1)
+                if not existing:
+                    raise
+                if initial_qty:
+                    existing.with_context(skip_allocation_sum_check=True).taken_qty += initial_qty
+                return existing
+            raise
+
+    def _validate_allocation_sums(self):
+        """Run sum-match check without the skip-flag. Call at end of sync to
+        catch silent drift. Raises ValidationError on mismatch."""
+        self.with_context(skip_allocation_sum_check=False)._check_lot_sum_matches()
+
+    def _fefo_sort_key(self, alloc):
+        """FEFO ordering: earliest expiration first (if product_expiry module is
+        installed), fallback to lot create_date, then allocation id for determinism.
+        Uses getattr so the code works with or without product_expiry."""
+        lot = alloc.lot_id
+        far_future = fields.Datetime.from_string('9999-12-31 23:59:59')
+        exp = getattr(lot, 'expiration_date', False) or far_future
+        created = lot.create_date or far_future
+        return (exp, created, alloc.id)
+
+    def _sync_allocation_on_take(self, picking, per_lot_enabled=None):
+        """Mirror a validated picking's lot distribution into lot_allocation_ids.
+        Idempotent: the picking's esfsm_allocation_synced flag prevents double-sync.
+        Post-sync: re-validates sum match; raises on drift."""
+        self.ensure_one()
+        if per_lot_enabled is None:
+            per_lot_enabled = self._is_per_lot_enabled()
+        if not per_lot_enabled or self.product_tracking == 'none':
             return
-        if self.product_tracking == 'none':
+        if picking.state != 'done':
+            raise ValidationError(_(
+                'Picking %(name)s не е валидиран (state=%(state)s). '
+                'Lot alokacijite мора да се sync-аат само после validation.',
+                name=picking.name, state=picking.state,
+            ))
+        if picking.esfsm_allocation_synced:
+            # Already processed — idempotent no-op on retry.
             return
+
         move_lines = picking.move_line_ids.filtered(
             lambda ml: ml.product_id == self.product_id and ml.lot_id and ml.quantity > 0
         )
         if not move_lines:
             return
-        lot_qtys = {}
+        lot_qtys = defaultdict(float)
         for ml in move_lines:
-            lot_qtys[ml.lot_id] = lot_qtys.get(ml.lot_id, 0.0) + ml.quantity
-        Allocation = self.env['esfsm.job.material.lot'].with_context(
-            skip_allocation_sum_check=True
-        )
+            lot_qtys[ml.lot_id] += ml.quantity
         for lot, qty in lot_qtys.items():
             if qty <= 0:
                 continue
-            existing = self.lot_allocation_ids.filtered(lambda a: a.lot_id == lot)
-            if existing:
-                existing[0].with_context(skip_allocation_sum_check=True).taken_qty += qty
-            else:
-                Allocation.create({
-                    'material_id': self.id,
-                    'lot_id': lot.id,
-                    'taken_qty': qty,
-                })
+            alloc = self._get_or_create_allocation(lot, initial_qty=0.0)
+            alloc.with_context(skip_allocation_sum_check=True).taken_qty = alloc.taken_qty + qty
+        # Mark picking as synced for idempotency on retry
+        picking.sudo().esfsm_allocation_synced = True
+        # Final validation catches silent drift
+        self.invalidate_recordset([
+            'taken_qty_per_lot_sum', 'used_qty_per_lot_sum', 'returned_qty_per_lot_sum',
+        ])
+        self._validate_allocation_sums()
 
-    def _sync_allocation_on_take_explicit(self, lot, qty):
-        """Explicit lot+qty allocation (used by Add wizard where user picks the lot)."""
+    def _sync_allocation_on_take_explicit(self, lot, qty, per_lot_enabled=None):
+        """Explicit lot+qty allocation (Add wizard where user picks the lot)."""
         self.ensure_one()
-        if not self._is_per_lot_enabled():
+        if per_lot_enabled is None:
+            per_lot_enabled = self._is_per_lot_enabled()
+        if not per_lot_enabled or self.product_tracking == 'none':
             return
-        if self.product_tracking == 'none' or not lot or qty <= 0:
+        if not lot or qty <= 0:
             return
-        existing = self.lot_allocation_ids.filtered(lambda a: a.lot_id == lot)
-        if existing:
-            existing[0].with_context(skip_allocation_sum_check=True).taken_qty += qty
-        else:
-            self.env['esfsm.job.material.lot'].with_context(
-                skip_allocation_sum_check=True
-            ).create({
-                'material_id': self.id,
-                'lot_id': lot.id,
-                'taken_qty': qty,
-            })
+        alloc = self._get_or_create_allocation(lot, initial_qty=0.0)
+        alloc.with_context(skip_allocation_sum_check=True).taken_qty = alloc.taken_qty + qty
+        self.invalidate_recordset([
+            'taken_qty_per_lot_sum', 'used_qty_per_lot_sum', 'returned_qty_per_lot_sum',
+        ])
+        self._validate_allocation_sums()
 
-    def _sync_allocation_on_consume(self, consume_qty, lot=None):
-        """Distribute a consume delta across allocations using FIFO of available_to_consume_qty.
-        If `lot` is given, consume only from matching allocations."""
+    def _distribute_across_allocations(self, total_qty, field, available_field, lot=None):
+        """FEFO distribute `total_qty` across allocations, writing `field`.
+        Uses a Python snapshot to avoid per-iteration recompute writes (C1 fix).
+        Returns the undistributed remainder."""
         self.ensure_one()
-        if not self._is_per_lot_enabled():
-            return
-        if self.product_tracking == 'none':
-            return
-        if not self.lot_allocation_ids:
-            return
+        rounding = self._rounding()
         candidates = self.lot_allocation_ids
         if lot:
             candidates = candidates.filtered(lambda a: a.lot_id == lot)
-        remaining = consume_qty
-        for alloc in candidates.sorted('available_to_consume_qty', reverse=True):
-            if remaining <= 0.001:
+        if not candidates:
+            return total_qty
+
+        # Snapshot ordered plan BEFORE mutating anything
+        ordered = candidates.sorted(key=lambda a: self._fefo_sort_key(a))
+        plan = []
+        remaining = total_qty
+        for alloc in ordered:
+            if float_is_zero(remaining, precision_rounding=rounding):
                 break
-            if alloc.available_to_consume_qty <= 0:
+            avail = getattr(alloc, available_field)
+            if avail <= 0:
                 continue
-            take = min(remaining, alloc.available_to_consume_qty)
-            alloc.with_context(skip_allocation_sum_check=True).used_qty += take
+            take = min(remaining, avail)
+            plan.append((alloc, getattr(alloc, field) + take))
             remaining -= take
-        if remaining > 0.001:
-            import logging
-            logging.getLogger(__name__).warning(
+
+        # Apply all writes from the plan (no recompute-read in loop)
+        for alloc, new_value in plan:
+            alloc.with_context(skip_allocation_sum_check=True).write({field: new_value})
+        return remaining
+
+    def _sync_allocation_on_consume(self, consume_qty, lot=None, per_lot_enabled=None):
+        """Distribute a consume delta across allocations using FEFO."""
+        self.ensure_one()
+        if per_lot_enabled is None:
+            per_lot_enabled = self._is_per_lot_enabled()
+        if not per_lot_enabled or self.product_tracking == 'none':
+            return
+        if not self.lot_allocation_ids:
+            return
+        remaining = self._distribute_across_allocations(
+            consume_qty, 'used_qty', 'available_to_consume_qty', lot=lot,
+        )
+        if float_compare(remaining, 0.0, precision_rounding=self._rounding()) > 0:
+            _logger.warning(
                 'Consume sync incomplete for material %s (%s): undistributed=%s',
                 self.id, self.product_id.display_name, remaining,
             )
+        self.invalidate_recordset([
+            'taken_qty_per_lot_sum', 'used_qty_per_lot_sum', 'returned_qty_per_lot_sum',
+        ])
+        self._validate_allocation_sums()
 
-    def _sync_allocation_on_return(self, return_qty, lot=None):
-        """Distribute a return delta across allocations using FIFO of available_to_return_qty."""
+    def _sync_allocation_on_return(self, return_qty, lot=None, per_lot_enabled=None):
+        """Distribute a return delta across allocations using FEFO."""
         self.ensure_one()
-        if not self._is_per_lot_enabled():
-            return
-        if self.product_tracking == 'none':
+        if per_lot_enabled is None:
+            per_lot_enabled = self._is_per_lot_enabled()
+        if not per_lot_enabled or self.product_tracking == 'none':
             return
         if not self.lot_allocation_ids:
             return
-        candidates = self.lot_allocation_ids
-        if lot:
-            candidates = candidates.filtered(lambda a: a.lot_id == lot)
-        remaining = return_qty
-        for alloc in candidates.sorted('available_to_return_qty', reverse=True):
-            if remaining <= 0.001:
-                break
-            if alloc.available_to_return_qty <= 0:
-                continue
-            take = min(remaining, alloc.available_to_return_qty)
-            alloc.with_context(skip_allocation_sum_check=True).returned_qty += take
-            remaining -= take
-        if remaining > 0.001:
-            import logging
-            logging.getLogger(__name__).warning(
+        remaining = self._distribute_across_allocations(
+            return_qty, 'returned_qty', 'available_to_return_qty', lot=lot,
+        )
+        if float_compare(remaining, 0.0, precision_rounding=self._rounding()) > 0:
+            _logger.warning(
                 'Return sync incomplete for material %s (%s): undistributed=%s',
                 self.id, self.product_id.display_name, remaining,
             )
+        self.invalidate_recordset([
+            'taken_qty_per_lot_sum', 'used_qty_per_lot_sum', 'returned_qty_per_lot_sum',
+        ])
+        self._validate_allocation_sums()
+
+    # ──────────────────────────────────────────────
+    # Drift detection (cron)
+    # ──────────────────────────────────────────────
+
+    @api.model
+    def _cron_detect_allocation_drift(self):
+        """Daily scan: log materials where sum(allocations) ≠ material totals.
+        Does NOT auto-fix — only surfaces drift for manual investigation.
+        Skips historical_gap rows."""
+        materials = self.sudo().search([
+            ('lot_allocation_ids', '!=', False),
+            ('lot_allocation_historical_gap', '=', False),
+        ])
+        drift_count = 0
+        for m in materials:
+            rounding = m._rounding()
+            checks = (
+                ('taken', m.taken_qty_per_lot_sum, m.taken_qty),
+                ('used', m.used_qty_per_lot_sum, m.used_qty),
+                ('returned', m.returned_qty_per_lot_sum, m.returned_qty),
+            )
+            for label, sum_v, total_v in checks:
+                if float_compare(sum_v, total_v, precision_rounding=rounding) != 0:
+                    drift_count += 1
+                    _logger.warning(
+                        'Allocation drift detected: material=%s job=%s product=%s '
+                        '%s sum=%s total=%s delta=%s',
+                        m.id, m.job_id.name, m.product_id.default_code or m.product_id.name,
+                        label, sum_v, total_v, sum_v - total_v,
+                    )
+                    break
+        if drift_count:
+            _logger.error(
+                'ESFSM allocation drift scan: %s materials with mismatched sums',
+                drift_count,
+            )
+        else:
+            _logger.info('ESFSM allocation drift scan: clean (%s materials)', len(materials))
+        return drift_count
 
     @api.depends('taken_qty', 'used_qty', 'returned_qty')
     def _compute_available_to_return_qty(self):

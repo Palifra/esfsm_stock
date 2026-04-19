@@ -25,6 +25,7 @@ class EsfsmJobMaterialLot(models.Model):
         required=True,
         domain="[('product_id', '=', product_id)]",
         ondelete='restrict',
+        index=True,
     )
 
     taken_qty = fields.Float(

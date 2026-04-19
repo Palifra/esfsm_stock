@@ -214,21 +214,24 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
         picking_service = self.env['esfsm.stock.picking.service']
         picking = picking_service.create_reverse_picking(job, lines_to_take)
 
+        # Read feature flag once per wizard action
+        per_lot = self.env['esfsm.job.material']._is_per_lot_enabled()
+
         # Update material lines taken_qty (bypass write() auto-picking)
         # Also sync auto-reserved lot back to material.lot_id (legacy, fixes lot-tracking bug)
         # and create lot_allocation_ids when Phase 2 feature flag is ON
         for line in lines_to_take:
-            material = line.material_line_id
-            new_taken = material.taken_qty + line.take_qty
-            vals = {'taken_qty': new_taken}
-            if not material.lot_id and material.product_id.tracking != 'none':
-                vals['lot_id'] = self._pick_primary_lot(picking, material.product_id)
-            line.material_line_id.with_context(
+            material_ctx = line.material_line_id.with_context(
                 skip_auto_picking=True,
                 skip_allocation_sum_check=True,
-            ).write(vals)
+            )
+            new_taken = material_ctx.taken_qty + line.take_qty
+            vals = {'taken_qty': new_taken}
+            if not material_ctx.lot_id and material_ctx.product_id.tracking != 'none':
+                vals['lot_id'] = self._pick_primary_lot(picking, material_ctx.product_id)
+            material_ctx.write(vals)
             # Phase 2 dual-write: mirror picking's lot distribution into allocations
-            material._sync_allocation_on_take(picking)
+            material_ctx._sync_allocation_on_take(picking, per_lot_enabled=per_lot)
 
         # Post notification to job chatter if there were partial/missing materials
         if messages:
@@ -339,17 +342,18 @@ class EsfsmTakeMaterialWizardLine(models.TransientModel):
         picking = picking_service.create_reverse_picking(job, self)
 
         # Update material line taken_qty and sync auto-reserved lot (legacy + allocations)
-        material = self.material_line_id
-        new_taken = material.taken_qty + self.take_qty
-        vals = {'taken_qty': new_taken}
-        if not material.lot_id and material.product_id.tracking != 'none':
-            vals['lot_id'] = self.wizard_id._pick_primary_lot(picking, material.product_id)
-        material.with_context(
+        material_ctx = self.material_line_id.with_context(
             skip_auto_picking=True,
             skip_allocation_sum_check=True,
-        ).write(vals)
-        # Phase 2 dual-write
-        material._sync_allocation_on_take(picking)
+        )
+        new_taken = material_ctx.taken_qty + self.take_qty
+        vals = {'taken_qty': new_taken}
+        if not material_ctx.lot_id and material_ctx.product_id.tracking != 'none':
+            vals['lot_id'] = self.wizard_id._pick_primary_lot(picking, material_ctx.product_id)
+        material_ctx.write(vals)
+        # Phase 2 dual-write (flag read once per action)
+        per_lot = self.env['esfsm.job.material']._is_per_lot_enabled()
+        material_ctx._sync_allocation_on_take(picking, per_lot_enabled=per_lot)
 
         # Post to chatter
         job.message_post(
