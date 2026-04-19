@@ -3,7 +3,7 @@
 
 {
     'name': 'ESFSM - Stock & Fleet Integration',
-    'version': '18.0.1.2.0',
+    'version': '18.0.1.4.0',
     'category': 'Services/Field Service',
     'summary': 'Material tracking for field service jobs with centralized location management',
     'description': """
@@ -69,11 +69,13 @@ Technical Details
         # Views
         'views/esfsm_job_views.xml',
         'views/esfsm_job_material_views.xml',
+        'views/esfsm_job_material_lot_views.xml',
         'views/esfsm_team_views.xml',
         'views/fleet_vehicle_views.xml',
         'views/hr_employee_views.xml',
         'views/stock_picking_views.xml',
         'views/wizard_views.xml',
+        'views/res_config_settings_views.xml',
     ],
     'demo': [],
     'installable': True,

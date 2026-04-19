@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="res_config_settings_view_form_esfsm_stock" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.esfsm.stock</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="base.res_config_settings_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//form" position="inside">
+                <app data-string="ESFSM Stock" string="ESFSM Stock"
+                     name="esfsm_stock" groups="esfsm.group_esfsm_manager">
+                    <block title="Lot Allocation" name="lot_allocation_section">
+                        <setting id="per_lot_allocations_enabled"
+                                 string="Алокации по лот"
+                                 help="Вклучи писменo во новиот sub-model за повеќе-лот алокација">
+                            <field name="esfsm_per_lot_allocations_enabled"/>
+                        </setting>
+                    </block>
+                </app>
+            </xpath>
+        </field>
+    </record>
+</odoo>
