@@ -411,9 +411,25 @@ class EsfsmLotAllocationMigration(models.AbstractModel):
         Safe: leaves resolvable combos (exact + surplus) for manual wizard."""
         buckets = self.classify_ambiguous_by_shortage()
         targets = buckets['shortage'] + buckets['no_lot_history']
+        return self._bulk_gap_combos(targets, label='shortage')
+
+    @api.model
+    def mark_all_ambiguous_as_gap(self):
+        """Bulk-mark ALL remaining ambiguous combos as gap, regardless of
+        whether picking history is sufficient. Use when the ambiguous records
+        are entirely historical (pre-lot-tracking) and the lot data attached
+        to them is incidental rather than meaningful."""
+        buckets = self.classify_ambiguous_by_shortage()
+        targets = (buckets['shortage'] + buckets['no_lot_history']
+                   + buckets['resolvable_exact'] + buckets['resolvable_surplus'])
+        return self._bulk_gap_combos(targets, label='all_ambiguous')
+
+    @api.model
+    def _bulk_gap_combos(self, combo_entries, label='bulk'):
+        """Internal bulk-gap executor. Skips materials already resolved."""
         Material = self.env['esfsm.job.material']
         flagged = 0
-        for entry in targets:
+        for entry in combo_entries:
             for mid in entry['material_ids']:
                 material = Material.browse(mid)
                 if material.lot_allocation_ids or material.lot_allocation_historical_gap:
@@ -424,10 +440,10 @@ class EsfsmLotAllocationMigration(models.AbstractModel):
                 })
                 flagged += 1
         _logger.warning(
-            'Bulk-marked %s materials as historical_gap across %s combos',
-            flagged, len(targets),
+            'Bulk-marked %s materials as historical_gap across %s combos (mode=%s)',
+            flagged, len(combo_entries), label,
         )
-        return {'flagged': flagged, 'combos': len(targets)}
+        return {'flagged': flagged, 'combos': len(combo_entries)}
 
     # ──────────────────────────────────────────────
     # Rollback

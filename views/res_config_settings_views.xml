@@ -29,6 +29,9 @@
                                 <button name="action_phase3_bulk_gap_shortage" type="object"
                                         string="Bulk Gap Shortage Combos" class="btn-warning"
                                         confirm="Ова автоматски ќе ги маркира како historical_gap сите ambiguous combos каде picking history не е доволна за taken_qty. Rollback-аат се преку JSON archive."/>
+                                <button name="action_phase3_bulk_gap_all" type="object"
+                                        string="Bulk Gap ALL Ambiguous" class="btn-warning"
+                                        confirm="Ова ќе ги маркира како historical_gap СИТЕ останати ambiguous combos (вклучувајќи surplus). Користи ако податоците се целосно исторически (pre lot-tracking). Rollback-аат се преку JSON archive."/>
                                 <button name="action_phase3_rollback" type="object"
                                         string="Rollback" class="btn-danger"
                                         confirm="ОПАСНО: Ова ќе ги избрише сите allocations и ќе го врати lot_id. Сигурни?"/>

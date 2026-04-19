@@ -94,6 +94,24 @@ class ResConfigSettings(models.TransientModel):
             },
         }
 
+    def action_phase3_bulk_gap_all(self):
+        """Bulk-mark ALL remaining ambiguous combos as gap (historical data)."""
+        self.ensure_one()
+        result = self.env['esfsm.lot.allocation.migration'].mark_all_ambiguous_as_gap()
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': _('Bulk Gap All Ambiguous DONE'),
+                'message': _('Flagged %(m)d materials as historical_gap '
+                             'across %(c)d combos.') % {
+                    'm': result['flagged'], 'c': result['combos'],
+                },
+                'type': 'success',
+                'sticky': True,
+            },
+        }
+
     def action_phase3_rollback(self):
         """Restore lot_id from JSON archive; delete all allocations. Destructive."""
         self.ensure_one()
