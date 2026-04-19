@@ -154,6 +154,11 @@ class EsfsmJobMaterial(models.Model):
         store=True,
         help='Најголема алокација по количина. За backward compatibility со legacy API.',
     )
+    lot_id_legacy_archive = fields.Json(
+        string='Legacy lot archive',
+        copy=False,
+        help='Snapshot of lot_id before Phase 3 migration, for reversibility.',
+    )
     taken_qty_per_lot_sum = fields.Float(
         string='Збир земено по лот',
         compute='_compute_lot_sums',

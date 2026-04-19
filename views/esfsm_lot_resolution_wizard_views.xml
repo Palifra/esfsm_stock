@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="esfsm_lot_resolution_wizard_form" model="ir.ui.view">
+        <field name="name">esfsm.lot.resolution.wizard.form</field>
+        <field name="model">esfsm.lot.resolution.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Resolution на lot allocation">
+                <header>
+                    <div class="alert alert-warning" role="alert">
+                        <strong>Внимание:</strong> Овој combo има повеќе material линии за
+                        ист производ. Распределете ги лотовите по линии. Сумата мора да
+                        се совпадне со taken_qty на секоја ставка.
+                    </div>
+                </header>
+                <sheet>
+                    <group>
+                        <field name="job_id" readonly="1"/>
+                        <field name="product_id" readonly="1"/>
+                        <field name="remaining_combos" readonly="1"/>
+                    </group>
+                    <field name="line_ids">
+                        <list editable="bottom">
+                            <field name="material_id"/>
+                            <field name="material_taken_qty" readonly="1"/>
+                            <field name="lot_id" readonly="1"/>
+                            <field name="lot_total_qty" readonly="1"/>
+                            <field name="qty"/>
+                        </list>
+                    </field>
+                </sheet>
+                <footer>
+                    <button name="action_resolve" type="object" string="Resolve"
+                            class="btn-primary"/>
+                    <button string="Откажи" special="cancel" class="btn-secondary"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_esfsm_lot_resolution_wizard" model="ir.actions.act_window">
+        <field name="name">Lot Allocation Resolution</field>
+        <field name="res_model">esfsm.lot.resolution.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+</odoo>

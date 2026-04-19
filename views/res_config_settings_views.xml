@@ -14,6 +14,21 @@
                                  help="Вклучи писменo во новиот sub-model за повеќе-лот алокација">
                             <field name="esfsm_per_lot_allocations_enabled"/>
                         </setting>
+                        <setting string="Phase 3 Migration"
+                                 help="Дry run или commit на historical data migration">
+                            <div class="mt16">
+                                <button name="action_phase3_dry_run" type="object"
+                                        string="Dry Run" class="btn-secondary"/>
+                                <button name="action_phase3_migrate_commit" type="object"
+                                        string="Commit Migration" class="btn-primary"
+                                        confirm="Ова ќе создаде allocations и gap flags врз основа на historical data. Сигурни сте?"/>
+                                <button name="action_phase3_resolve_ambiguous" type="object"
+                                        string="Resolve Ambiguous" class="btn-secondary"/>
+                                <button name="action_phase3_rollback" type="object"
+                                        string="Rollback" class="btn-danger"
+                                        confirm="ОПАСНО: Ова ќе ги избрише сите allocations и ќе го врати lot_id. Сигурни?"/>
+                            </div>
+                        </setting>
                     </block>
                 </app>
             </xpath>

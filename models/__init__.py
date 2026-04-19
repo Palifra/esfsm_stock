@@ -9,3 +9,4 @@ from . import esfsm_team
 from . import hr_employee
 from . import stock_picking
 from . import res_config_settings
+from . import lot_allocation_migration
