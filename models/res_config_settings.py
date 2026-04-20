@@ -50,8 +50,22 @@ class ResConfigSettings(models.TransientModel):
         }
 
     def action_phase3_resolve_ambiguous(self):
-        """Open resolution wizard for ambiguous combos."""
+        """Open resolution wizard for ambiguous combos. If no combos remain,
+        show a notification instead of opening an empty wizard (which would
+        crash Odoo's legacy form BasicModel on interaction — _abandonRecords
+        TypeError when a declared relational field has no data)."""
         self.ensure_one()
+        if not self.env['esfsm.lot.resolution.wizard']._find_next_ambiguous():
+            return {
+                'type': 'ir.actions.client',
+                'tag': 'display_notification',
+                'params': {
+                    'title': _('Сите готови'),
+                    'message': _('Нема ambiguous combos кои чекаат resolution.'),
+                    'type': 'success',
+                    'sticky': False,
+                },
+            }
         return {
             'type': 'ir.actions.act_window',
             'res_model': 'esfsm.lot.resolution.wizard',

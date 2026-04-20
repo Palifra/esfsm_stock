@@ -108,6 +108,56 @@ class TestPhase3Migration(TransactionCase):
         self.env['ir.config_parameter'].sudo().set_param(
             'esfsm_stock.per_lot_allocations_enabled', 'True')
 
+    def test_08a_resolution_wizard_default_get_when_no_combos(self):
+        """Regression: when all combos are resolved, default_get must fully
+        initialize all relational fields. Otherwise Odoo's legacy BasicModel
+        crashes on _abandonRecords / this.data[fieldName] is undefined."""
+        # Precondition: ensure no ambiguous combos remain. In a fresh test DB
+        # there are none by default; also covered by production state post-bulk-gap.
+        wizard_model = self.env['esfsm.lot.resolution.wizard']
+
+        # If test data created any ambiguous combos, resolve them to ensure
+        # _find_next_ambiguous returns None for this test.
+        stats = self.env['esfsm.lot.allocation.migration']._classify_materials()
+        for combo in stats['ambiguous']:
+            materials = self.env['esfsm.job.material'].browse(combo['material_ids'])
+            materials.with_context(
+                skip_allocation_sum_check=True,
+            ).write({'lot_allocation_historical_gap': True})
+
+        self.assertIsNone(wizard_model._find_next_ambiguous())
+
+        defaults = wizard_model.default_get([
+            'job_id', 'product_id', 'material_ids', 'line_ids',
+            'total_material_taken', 'total_lot_qty', 'remaining_combos',
+        ])
+        # All relational fields must be present (not undefined) to prevent
+        # Odoo client-side TypeError in legacy BasicModel.
+        for field_name in ('line_ids', 'material_ids', 'job_id',
+                           'product_id', 'total_material_taken',
+                           'total_lot_qty', 'remaining_combos'):
+            self.assertIn(
+                field_name, defaults,
+                msg=f'default_get missing {field_name} when no combo — '
+                    f'will crash _abandonRecords on form interaction'
+            )
+
+    def test_08b_settings_resolve_button_skips_empty_wizard(self):
+        """Regression: Settings button must not open empty wizard."""
+        # Resolve any test-created ambiguous combos first
+        stats = self.env['esfsm.lot.allocation.migration']._classify_materials()
+        for combo in stats['ambiguous']:
+            materials = self.env['esfsm.job.material'].browse(combo['material_ids'])
+            materials.with_context(
+                skip_allocation_sum_check=True,
+            ).write({'lot_allocation_historical_gap': True})
+
+        settings = self.env['res.config.settings'].create({})
+        result = settings.action_phase3_resolve_ambiguous()
+        # Should return a notification, not an act_window
+        self.assertEqual(result['type'], 'ir.actions.client')
+        self.assertEqual(result['tag'], 'display_notification')
+
     def test_08_rollback_restores_lot_id(self):
         """Rollback restores lot_id and deletes allocations."""
         m = self._material(taken_qty=5.0, lot_id=self.lot_a.id)

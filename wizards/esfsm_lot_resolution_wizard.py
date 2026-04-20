@@ -71,7 +71,19 @@ class EsfsmLotResolutionWizard(models.TransientModel):
 
         combo = self._find_next_ambiguous()
         if not combo:
-            res['line_ids'] = []
+            # All combos resolved — fully initialize ALL relational fields so that
+            # Odoo's legacy BasicModel doesn't crash on _abandonRecords when user
+            # closes or interacts with an empty wizard. Settings button already
+            # short-circuits to a notification, but direct URL access lands here.
+            res.update({
+                'line_ids': [],
+                'material_ids': [(5, 0, 0)],
+                'job_id': False,
+                'product_id': False,
+                'total_material_taken': 0.0,
+                'total_lot_qty': 0.0,
+                'remaining_combos': 0,
+            })
             return res
 
         job_id, product_id, material_ids = combo
