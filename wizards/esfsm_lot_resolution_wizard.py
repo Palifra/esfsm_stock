@@ -28,11 +28,9 @@ class EsfsmLotResolutionWizard(models.TransientModel):
 
     job_id = fields.Many2one('esfsm.job', string='Работа', readonly=True)
     product_id = fields.Many2one('product.product', string='Производ', readonly=True)
-    material_ids = fields.Many2many(
-        'esfsm.job.material',
-        string='Материјали во combo',
-        readonly=True,
-    )
+    # material_ids removed from view — legacy BasicModel crashes on
+    # invisible Many2many with half-initialized state. We derive materials
+    # on-demand from line_ids.mapped('material_id') instead.
     line_ids = fields.One2many(
         'esfsm.lot.resolution.wizard.line',
         'wizard_id',
@@ -71,13 +69,10 @@ class EsfsmLotResolutionWizard(models.TransientModel):
 
         combo = self._find_next_ambiguous()
         if not combo:
-            # All combos resolved — fully initialize ALL relational fields so that
-            # Odoo's legacy BasicModel doesn't crash on _abandonRecords when user
-            # closes or interacts with an empty wizard. Settings button already
-            # short-circuits to a notification, but direct URL access lands here.
+            # All combos resolved — initialize scalars; no invisible relational
+            # fields in view any more.
             res.update({
                 'line_ids': [],
-                'material_ids': [(5, 0, 0)],
                 'job_id': False,
                 'product_id': False,
                 'total_material_taken': 0.0,
@@ -89,7 +84,6 @@ class EsfsmLotResolutionWizard(models.TransientModel):
         job_id, product_id, material_ids = combo
         res['job_id'] = job_id
         res['product_id'] = product_id
-        res['material_ids'] = [(6, 0, material_ids)]
 
         materials = self.env['esfsm.job.material'].browse(material_ids)
         migration = self.env['esfsm.lot.allocation.migration']
@@ -206,16 +200,18 @@ class EsfsmLotResolutionWizard(models.TransientModel):
 
     def action_mark_as_gap(self):
         """Flag all materials in combo as historical_gap. Used when picking
-        history is insufficient to explain taken_qty (e.g., legacy data)."""
+        history is insufficient to explain taken_qty (e.g., legacy data).
+        Materials are derived from line_ids (one row per material×lot pair)."""
         self.ensure_one()
         migration = self.env['esfsm.lot.allocation.migration']
-        for material in self.material_ids:
+        materials = self.line_ids.mapped('material_id')
+        for material in materials:
             migration._snapshot_legacy(material)
             material.with_context(skip_allocation_sum_check=True).write({
                 'lot_allocation_historical_gap': True,
             })
         return self._next_action(
-            _('Marked %d materials as historical gap.') % len(self.material_ids)
+            _('Marked %d materials as historical gap.') % len(materials)
         )
 
     def action_skip(self):
