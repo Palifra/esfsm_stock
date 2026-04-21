@@ -3,7 +3,7 @@
 
 {
     'name': 'ESFSM - Stock & Fleet Integration',
-    'version': '18.0.1.8.5',
+    'version': '18.0.1.8.6',
     'category': 'Services/Field Service',
     'summary': 'Material tracking for field service jobs with centralized location management',
     'description': """

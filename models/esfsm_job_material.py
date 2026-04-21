@@ -186,13 +186,16 @@ class EsfsmJobMaterial(models.Model):
 
     @api.depends('lot_allocation_ids.taken_qty', 'lot_allocation_ids.lot_id', 'lot_id')
     def _compute_primary_lot(self):
+        # Tie-break note: for unsaved records (NewId), id doesn't support
+        # arithmetic. Coerce to int or 0 to keep the key comparable under
+        # onchange snapshot evaluation.
+        def _sort_key(alloc):
+            aid = alloc.id if isinstance(alloc.id, int) else 0
+            return (alloc.taken_qty, -aid)
+
         for m in self:
             if m.lot_allocation_ids:
-                # Deterministic: largest taken_qty, then lowest id for tie-break
-                primary = max(
-                    m.lot_allocation_ids,
-                    key=lambda a: (a.taken_qty, -a.id),
-                )
+                primary = max(m.lot_allocation_ids, key=_sort_key)
                 m.primary_lot_id = primary.lot_id
             elif m.lot_id:
                 # Fallback to legacy during Phase 2 transition

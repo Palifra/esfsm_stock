@@ -165,6 +165,34 @@ class TestLotAllocation(TransactionCase):
         material = self._material()
         self.assertFalse(material.primary_lot_id)
 
+    def test_20b_primary_lot_survives_newid_records(self):
+        """Regression: onchange snapshots pass NewId (unsaved) records into
+        the compute. Using -a.id on NewId throws TypeError and breaks any
+        form that displays esfsm.job materials (e.g. Travel/ERV tabs).
+
+        Repro from production 2026-04-21 08:15 GMT — traceback:
+            File "esfsm_job_material.py", line 194, in <lambda>
+                key=lambda a: (a.taken_qty, -a.id),
+            TypeError: bad operand type for unary -: 'NewId'
+        """
+        material = self._material(taken_qty=5.0)
+        # Use new() to create in-memory allocation with NewId id
+        new_alloc = self.env['esfsm.job.material.lot'].new({
+            'material_id': material.id,
+            'lot_id': self.lot_a.id,
+            'taken_qty': 5.0,
+        })
+        # Combine persisted and new for realistic onchange snapshot state
+        combined = new_alloc  # Just the NewId-backed one is enough
+        # Directly exercise the compute with NewId allocation — must not raise
+        material_with_new = material.with_context()
+        material_with_new.lot_allocation_ids = combined
+        # Trigger compute via field access (normally would be via snapshot)
+        try:
+            _ = material_with_new.primary_lot_id
+        except TypeError as e:
+            self.fail(f'_compute_primary_lot raised on NewId allocation: {e}')
+
     def test_21_allocation_changes_primary_lot(self):
         """M1 fix check: primary_lot_id should auto-recompute via @api.depends
         chain when child allocations mutate — no manual invalidation needed."""
