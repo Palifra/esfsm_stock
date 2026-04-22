@@ -78,6 +78,14 @@ class EsfsmJobMaterialLot(models.Model):
         store=True,
         readonly=True,
     )
+    source_picking_ids = fields.Many2many(
+        'stock.picking',
+        string='Source pickings',
+        copy=False,
+        help='Pickings whose move_lines contribute to this allocation. '
+             'Used for per-material per-picking sync idempotency — avoids '
+             'double-counting when the same picking is re-processed.',
+    )
 
     _sql_constraints = [
         ('check_positive_taken', 'CHECK(taken_qty >= 0)',

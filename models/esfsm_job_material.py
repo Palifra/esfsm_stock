@@ -296,8 +296,13 @@ class EsfsmJobMaterial(models.Model):
 
     def _sync_allocation_on_take(self, picking, per_lot_enabled=None):
         """Mirror a validated picking's lot distribution into lot_allocation_ids.
-        Idempotent: the picking's esfsm_allocation_synced flag prevents double-sync.
-        Post-sync: re-validates sum match; raises on drift."""
+
+        Per-material per-picking idempotency: each allocation tracks which
+        pickings contributed to it via source_picking_ids. Re-sync for the
+        same (material, picking) pair is a no-op. This replaces the old
+        picking-level flag which was buggy when one picking served multiple
+        materials — subsequent materials saw `esfsm_allocation_synced=True`
+        and skipped their own sync, leaving them with empty allocations."""
         self.ensure_one()
         if per_lot_enabled is None:
             per_lot_enabled = self._is_per_lot_enabled()
@@ -309,9 +314,6 @@ class EsfsmJobMaterial(models.Model):
                 'Lot alokacijite мора да се sync-аат само после validation.',
                 name=picking.name, state=picking.state,
             ))
-        if picking.esfsm_allocation_synced:
-            # Already processed — idempotent no-op on retry.
-            return
 
         move_lines = picking.move_line_ids.filtered(
             lambda ml: ml.product_id == self.product_id and ml.lot_id and ml.quantity > 0
@@ -321,14 +323,21 @@ class EsfsmJobMaterial(models.Model):
         lot_qtys = defaultdict(float)
         for ml in move_lines:
             lot_qtys[ml.lot_id] += ml.quantity
+        touched_any = False
         for lot, qty in lot_qtys.items():
             if qty <= 0:
                 continue
             alloc = self._get_or_create_allocation(lot, initial_qty=0.0)
+            # Per-(material, picking) idempotency guard
+            if picking in alloc.source_picking_ids:
+                continue
             alloc.with_context(skip_allocation_sum_check=True).taken_qty = alloc.taken_qty + qty
-        # Mark picking as synced for idempotency on retry
+            alloc.with_context(skip_allocation_sum_check=True).source_picking_ids = [(4, picking.id)]
+            touched_any = True
+        if not touched_any:
+            return
+        # Retain the picking-level marker for backward audit compatibility
         picking.sudo().esfsm_allocation_synced = True
-        # Final validation catches silent drift
         self.invalidate_recordset([
             'taken_qty_per_lot_sum', 'used_qty_per_lot_sum', 'returned_qty_per_lot_sum',
         ])
