@@ -81,7 +81,7 @@
                             <field name="lot_allocation_ids">
                                 <list editable="bottom" limit="5">
                                     <field name="lot_id" required="1"/>
-                                    <field name="taken_qty"/>
+                                    <field name="taken_qty" readonly="1"/>
                                     <field name="used_qty" readonly="1"/>
                                     <field name="returned_qty" readonly="1"/>
                                     <field name="available_to_consume_qty" readonly="1"

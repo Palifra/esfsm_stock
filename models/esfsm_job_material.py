@@ -816,10 +816,23 @@ class EsfsmJobMaterial(models.Model):
         """
         Write method with context flag to skip auto-picking.
 
-        When called from wizards with context={'skip_auto_picking': True},
-        the picking creation is skipped because the wizard already handles it.
+        When called from wizards / apply_* with context
+        {'skip_auto_picking': True}, the picking creation is skipped because the
+        caller already created (and validated) the stock picking and synced the
+        per-lot allocations.
 
-        Direct edits from UI are blocked by readonly fields in views.
+        Direct edits from the UI are blocked by readonly fields in the views
+        (taken/used/returned on both list & form, and the embedded per-lot
+        allocation taken_qty — Task 9). A DIRECT write (without
+        ``skip_auto_picking``) of taken/used/returned is logged as a WARNING but
+        NOT hard-rejected: the production audit (Task 9) confirms every
+        legitimate caller passes skip_auto_picking=True (take/consume/return/add
+        wizards, apply_take/apply_consume/apply_return, and the esfsm_api
+        endpoints that route through them; the esfsm_api sync allowlist excludes
+        these three fields by design — Task 7/8), but several pre-existing tests
+        fabricate state via raw writes, so escalating to a hard error would
+        break the suite. planned_qty (a planning estimate) stays directly
+        editable.
         """
         # Audit log: track quantity changes in job chatter
         quantity_fields = {'taken_qty', 'used_qty', 'returned_qty', 'planned_qty'}
@@ -847,19 +860,30 @@ class EsfsmJobMaterial(models.Model):
         if self.env.context.get('skip_auto_picking'):
             return super().write(vals)
 
-        # For any other write (should not happen due to readonly fields),
-        # we still prevent direct quantity changes without proper workflow
+        # Any other write reaching here is a DIRECT (non-wizard / non-apply_*)
+        # write of a stock-ledger-backed quantity field. Production code NEVER
+        # does this — every legitimate caller (take/consume/return/add wizards,
+        # apply_take/apply_consume/apply_return, and the esfsm_api endpoints that
+        # route through them) passes skip_auto_picking=True, and the esfsm_api
+        # sync allowlist explicitly EXCLUDES these three fields (Task 7/8). The
+        # views already render them readonly (defence in the UI).
+        #
+        # NOTE (Task 9): hard-raising a UserError here was evaluated. The
+        # *production* audit is CLEAN, but several PRE-EXISTING tests fabricate
+        # state with a raw `write({'used_qty': ...})` (or only
+        # `skip_allocation_sum_check`), so escalating to a hard error changed the
+        # suite's failure count. Per the conservative mandate we keep this as a
+        # WARNING (not a hard error); the UI readonly fields + the esfsm_api sync
+        # allowlist remain the enforced guards.
         qty_only = {'taken_qty', 'used_qty', 'returned_qty'}
         changed_direct = [f for f in qty_only if f in vals]
 
         if changed_direct:
-            # Log warning - this should not happen in normal operation
-            import logging
-            _logger = logging.getLogger(__name__)
             _logger.warning(
-                'Direct write to quantity fields %s on material line %s. '
-                'This should be done via wizards.',
-                changed_direct, self.ids
+                'Direct write to quantity fields %s on material line %s '
+                'WITHOUT skip_auto_picking. Quantity changes must go through the '
+                'take/consume/return wizards or the apply_* methods.',
+                changed_direct, self.ids,
             )
 
         return super().write(vals)
