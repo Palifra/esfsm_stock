@@ -250,47 +250,90 @@ class StockPickingService(models.AbstractModel):
                         ml.quantity = remaining
                         remaining = 0.0
 
+    def _normalize_wizard_lines(self, wizard_lines, qty_field):
+        """Turn a wizard-line recordset into the normalized ``material_lines``
+        dict list consumed by ``create_*_picking_from_lines``.
+
+        Each wizard exposes its quantity under a different field name
+        (``take_qty`` / ``consume_qty`` / ``return_qty``); ``qty_field`` selects
+        it. Lines with a zero/negative quantity are skipped (same behavior the
+        inline loops had previously).
+
+        Args:
+            wizard_lines: recordset of wizard lines.
+            qty_field: str, the quantity field name on the line.
+
+        Returns:
+            list[dict] with keys material_line_id, product_id, product_uom_id,
+            quantity, lot_id.
+        """
+        material_lines = []
+        for line in wizard_lines:
+            qty = getattr(line, qty_field)
+            if qty > 0:
+                material_lines.append({
+                    'material_line_id': line.material_line_id,
+                    'product_id': line.product_id,
+                    'product_uom_id': line.product_uom_id,
+                    'quantity': qty,
+                    'lot_id': line.lot_id if line.lot_id else False,
+                })
+        return material_lines
+
     def create_reverse_picking(self, job, wizard_lines):
         """
         Create Реверс picking (warehouse → technician/vehicle).
         Used when taking materials from warehouse.
-        
+
+        Thin wrapper: normalizes the wizard lines (``take_qty``) and delegates to
+        ``create_reverse_picking_from_lines`` — the single canonical path also
+        used by ``esfsm.job.material.apply_take`` and (next task) the REST API.
+
         Args:
             job: esfsm.job record
             wizard_lines: recordset of wizard lines with fields:
                          material_line_id, product_id, product_uom_id, take_qty, lot_id
-            
+
         Returns:
             stock.picking: Created picking record
         """
+        material_lines = self._normalize_wizard_lines(wizard_lines, 'take_qty')
+        return self.create_reverse_picking_from_lines(job, material_lines)
+
+    def create_reverse_picking_from_lines(self, job, material_lines):
+        """Canonical Реверс builder (warehouse → technician/vehicle).
+
+        Accepts a pre-normalized ``material_lines`` dict list so it can be driven
+        by EITHER wizard lines (via ``create_reverse_picking``) OR a single
+        (material, qty, lot) tuple (via ``apply_take``) without a wizard record.
+
+        Args:
+            job: esfsm.job record
+            material_lines: list of dicts with keys material_line_id, product_id,
+                           product_uom_id, quantity, lot_id (optional).
+
+        Returns:
+            stock.picking: Created picking record (empty recordset if no lines).
+        """
+        if not material_lines:
+            return self.env['stock.picking']
+
         # Get picking type
         picking_type = self._get_picking_type('Реверс', job.company_id.id, 'internal')
-        
+
         # Get locations
         warehouse = self.env['stock.warehouse'].search([
             ('company_id', '=', job.company_id.id)
         ], limit=1)
         source_location = warehouse.lot_stock_id if warehouse else self.env.ref('stock.stock_location_stock')
         dest_location = job._get_source_location()
-        
-        # Prepare material lines data
-        material_lines = []
-        for line in wizard_lines:
-            if line.take_qty > 0:
-                material_lines.append({
-                    'material_line_id': line.material_line_id,
-                    'product_id': line.product_id,
-                    'product_uom_id': line.product_uom_id,
-                    'quantity': line.take_qty,
-                    'lot_id': line.lot_id if line.lot_id else False,
-                })
-        
+
         # Create picking
         picking = self._create_picking_with_moves(
             job, picking_type, source_location, dest_location,
             material_lines, 'Реверс'
         )
-        
+
         # Post message to job chatter
         technician_name = self._get_technician_name(job)
         material_list = ', '.join([
@@ -302,22 +345,41 @@ class StockPickingService(models.AbstractModel):
                 technician_name, material_list, picking.name
             )
         )
-        
+
         return picking
 
     def create_delivery_picking(self, job, wizard_lines):
         """
         Create Испратница picking (technician/vehicle → customer).
         Used when consuming materials on job site.
-        
+
+        Thin wrapper: normalizes the wizard lines (``consume_qty``) and delegates
+        to ``create_delivery_picking_from_lines``.
+
         Args:
             job: esfsm.job record
             wizard_lines: recordset of wizard lines with fields:
                          material_line_id, product_id, product_uom_id, consume_qty, lot_id
-            
+
         Returns:
             stock.picking: Created picking record
         """
+        material_lines = self._normalize_wizard_lines(wizard_lines, 'consume_qty')
+        return self.create_delivery_picking_from_lines(job, material_lines)
+
+    def create_delivery_picking_from_lines(self, job, material_lines):
+        """Canonical Испратница builder (technician/vehicle → customer).
+
+        Args:
+            job: esfsm.job record
+            material_lines: list of dicts (see create_reverse_picking_from_lines).
+
+        Returns:
+            stock.picking: Created picking record (empty recordset if no lines).
+        """
+        if not material_lines:
+            return self.env['stock.picking']
+
         # Get picking type (outgoing)
         picking_type = self._get_picking_type('Испратници', job.company_id.id, 'outgoing')
         if not picking_type:
@@ -325,29 +387,17 @@ class StockPickingService(models.AbstractModel):
                 ('code', '=', 'outgoing'),
                 ('company_id', '=', job.company_id.id)
             ], limit=1)
-        
+
         # Get locations
         source_location = job._get_source_location()  # Vehicle/technician location
         dest_location = self.env.ref('stock.stock_location_customers')  # Customer/consumption
-        
-        # Prepare material lines data
-        material_lines = []
-        for line in wizard_lines:
-            if line.consume_qty > 0:
-                material_lines.append({
-                    'material_line_id': line.material_line_id,
-                    'product_id': line.product_id,
-                    'product_uom_id': line.product_uom_id,
-                    'quantity': line.consume_qty,
-                    'lot_id': line.lot_id if line.lot_id else False,
-                })
-        
+
         # Create picking
         picking = self._create_picking_with_moves(
             job, picking_type, source_location, dest_location,
             material_lines, 'Испратница'
         )
-        
+
         # Post message to job chatter
         technician_name = self._get_technician_name(job)
         job.message_post(
@@ -355,47 +405,54 @@ class StockPickingService(models.AbstractModel):
                 technician_name, job.partner_id.name, len(material_lines), picking.name
             )
         )
-        
+
         return picking
 
     def create_return_picking(self, job, wizard_lines):
         """
         Create Повратница picking (technician/vehicle → warehouse).
         Used when returning unused materials.
-        
+
+        Thin wrapper: normalizes the wizard lines (``return_qty``) and delegates
+        to ``create_return_picking_from_lines``.
+
         Args:
             job: esfsm.job record
             wizard_lines: recordset of wizard lines with fields:
                          material_line_id, product_id, product_uom_id, return_qty, lot_id
-            
+
         Returns:
             stock.picking: Created picking record
         """
+        material_lines = self._normalize_wizard_lines(wizard_lines, 'return_qty')
+        return self.create_return_picking_from_lines(job, material_lines)
+
+    def create_return_picking_from_lines(self, job, material_lines):
+        """Canonical Повратница builder (technician/vehicle → warehouse).
+
+        Args:
+            job: esfsm.job record
+            material_lines: list of dicts (see create_reverse_picking_from_lines).
+
+        Returns:
+            stock.picking: Created picking record (empty recordset if no lines).
+        """
+        if not material_lines:
+            return self.env['stock.picking']
+
         # Get picking type
         picking_type = self._get_picking_type('Враќање на Реверс', job.company_id.id, 'internal')
-        
+
         # Get locations
         source_location = job._get_source_location()  # Technician/vehicle location
         dest_location = picking_type.default_location_dest_id or self.env.ref('stock.stock_location_stock')
-        
-        # Prepare material lines data
-        material_lines = []
-        for line in wizard_lines:
-            if line.return_qty > 0:
-                material_lines.append({
-                    'material_line_id': line.material_line_id,
-                    'product_id': line.product_id,
-                    'product_uom_id': line.product_uom_id,
-                    'quantity': line.return_qty,
-                    'lot_id': line.lot_id if line.lot_id else False,
-                })
-        
+
         # Create picking
         picking = self._create_picking_with_moves(
             job, picking_type, source_location, dest_location,
             material_lines, 'Повратница'
         )
-        
+
         # Post message to job chatter
         technician_name = self._get_technician_name(job)
         job.message_post(
@@ -403,5 +460,5 @@ class StockPickingService(models.AbstractModel):
                 technician_name, len(material_lines), picking.name
             )
         )
-        
+
         return picking

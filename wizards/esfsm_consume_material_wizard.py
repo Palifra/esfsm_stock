@@ -113,8 +113,6 @@ class EsfsmConsumeMaterialWizard(models.TransientModel):
         picking_service = self.env['esfsm.stock.picking.service']
         picking = picking_service.create_delivery_picking(job, lines_to_consume)
 
-        per_lot = self.env['esfsm.job.material']._is_per_lot_enabled()
-
         # Write per-allocation first, then rebuild material scalar
         touched_materials = set()
         for line in lines_to_consume:
@@ -130,43 +128,12 @@ class EsfsmConsumeMaterialWizard(models.TransientModel):
                 # (aggregate / legacy line that slipped through). Without this
                 # branch the consume falls through every case and the
                 # sum(allocations) rebuild below silently DROPS it → drift.
-                # Distribute it FEFO across allocations via the model helper.
-                #
-                # Capacity guard: if the consume exceeds the available headroom
-                # across the candidate allocations, raise a clear localized
-                # error instead of silently dropping the remainder (or emitting
-                # an opaque sum-mismatch).
-                candidates = material.lot_allocation_ids
-                if line.lot_id:
-                    candidates = candidates.filtered(
-                        lambda a: a.lot_id == line.lot_id)
-                rounding = material._rounding()
-                available = sum(candidates.mapped('available_to_consume_qty'))
-                if float_compare(line.consume_qty, available,
-                                 precision_rounding=rounding) > 0:
-                    raise ValidationError(_(
-                        'Не може да се распредели потрошувачка од %(qty).2f на '
-                        '%(product)s по достапните лот-алокации (достапно само '
-                        '%(avail).2f).',
-                        qty=line.consume_qty, product=material.product_id.name,
-                        avail=available,
-                    ))
-                # Pre-set the scalar to the post-distribution target (current
-                # allocation sum + this consume) so the sum-check inside
-                # _sync_allocation_on_consume ties out at validation time. The
-                # final rebuild below re-derives the same value from the
-                # allocations, so there is no double count.
-                current_alloc_used = sum(
-                    material.lot_allocation_ids.mapped('used_qty'))
-                material.with_context(
-                    skip_auto_picking=True,
-                    skip_allocation_sum_check=True,
-                ).used_qty = current_alloc_used + line.consume_qty
-                material.invalidate_recordset(['used_qty'])
-                material._sync_allocation_on_consume(
-                    line.consume_qty, lot=line.lot_id or False,
-                    per_lot_enabled=per_lot,
-                )
+                # Delegate the capacity guard + pre-set + FEFO distribute + scalar
+                # re-derive to the shared model helper (same logic apply_consume
+                # uses). The trailing rebuild loop below re-derives the same scalar
+                # from the allocation sum, so there is no double count.
+                material._apply_consume_to_allocations(
+                    line.consume_qty, lot=line.lot_id or False)
             # Material scalar is rebuilt from allocations (below) OR
             # updated directly for gap / untracked materials
             if not material.lot_allocation_ids and not line.allocation_id:

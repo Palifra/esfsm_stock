@@ -9,3 +9,4 @@ from . import test_create_picking_finalizer
 from . import test_take_double_count
 from . import test_allocation_residue
 from . import test_consume_return_drop
+from . import test_apply_methods

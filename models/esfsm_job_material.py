@@ -440,6 +440,275 @@ class EsfsmJobMaterial(models.Model):
         self._validate_allocation_sums()
 
     # ──────────────────────────────────────────────
+    # Canonical per-material movement methods (Task 6)
+    # ──────────────────────────────────────────────
+    #
+    # apply_take / apply_consume / apply_return are the SINGLE path that both the
+    # wizards and (next task) the REST API call so every material movement flows
+    # through one stock-move-backed, allocation-synced, validated route. They
+    # reuse the existing picking service (create_*_picking_from_lines) and the
+    # existing _sync_allocation_on_* / _distribute_across_allocations helpers —
+    # no duplication of the distribution/sync logic.
+    #
+    # The ALLOCATION side of consume/return (capacity guard → pre-set scalar →
+    # FEFO distribute → re-derive scalar) is identical between apply_consume /
+    # apply_return and the consume/return wizards' per-line allocation branch, so
+    # it lives in the two shared helpers below. Only the picking creation differs
+    # (apply_* makes a per-material picking, the wizard makes one batch picking),
+    # which stays in each caller.
+
+    def _apply_consume_to_allocations(self, qty, lot=False):
+        """Distribute a consume of ``qty`` across THIS material's lot allocations.
+
+        Shared by ``apply_consume`` and the consume wizard's per-line allocation
+        branch. Caller is responsible for creating the stock-move-backed picking
+        (per-material vs batch) — this helper only touches the allocations and
+        the ``used_qty`` scalar.
+
+        Sequence (identical for both callers):
+          1. Capacity guard FIRST — raise a localized ValidationError on
+             over-consume BEFORE any allocation is mutated (so no drift).
+          2. Pre-set ``used_qty`` to the post-distribution target
+             (``sum(alloc.used_qty) + qty``) so the sum-check inside
+             ``_sync_allocation_on_consume`` ties out at validation time.
+          3. FEFO-distribute the consume across allocations.
+          4. Re-derive ``used_qty`` from the allocation sum (the wizard's trailing
+             rebuild loop derives the same value, so there is no double effect).
+
+        Does NOT call ``_validate_allocation_sums`` — callers run that as their
+        final integrity check (apply_consume inline, the wizard in its trailing
+        loop), matching the prior behavior exactly.
+        """
+        self.ensure_one()
+        per_lot = self._is_per_lot_enabled()
+        candidates = self.lot_allocation_ids
+        if lot:
+            candidates = candidates.filtered(lambda a: a.lot_id == lot)
+        rounding = self._rounding()
+        available = sum(candidates.mapped('available_to_consume_qty'))
+        if float_compare(qty, available, precision_rounding=rounding) > 0:
+            raise ValidationError(_(
+                'Не може да се распредели потрошувачка од %(qty).2f на '
+                '%(product)s по достапните лот-алокации (достапно само '
+                '%(avail).2f).',
+                qty=qty, product=self.product_id.name, avail=available,
+            ))
+        material_ctx = self.with_context(
+            skip_auto_picking=True,
+            skip_allocation_sum_check=True,
+        )
+        current_alloc_used = sum(self.lot_allocation_ids.mapped('used_qty'))
+        material_ctx.used_qty = current_alloc_used + qty
+        self.invalidate_recordset(['used_qty'])
+        self._sync_allocation_on_consume(
+            qty, lot=lot or False, per_lot_enabled=per_lot)
+        material_ctx.used_qty = sum(self.lot_allocation_ids.mapped('used_qty'))
+
+    def _apply_return_to_allocations(self, qty, lot=False):
+        """Distribute a return of ``qty`` across THIS material's lot allocations.
+
+        Mirror of ``_apply_consume_to_allocations`` for the return leg. Shared by
+        ``apply_return`` and the return wizard's per-line allocation branch.
+        Caller creates the picking; this helper only touches the allocations and
+        the ``returned_qty`` scalar. Does NOT call ``_validate_allocation_sums``
+        (callers run it as their final check), matching prior behavior.
+        """
+        self.ensure_one()
+        per_lot = self._is_per_lot_enabled()
+        candidates = self.lot_allocation_ids
+        if lot:
+            candidates = candidates.filtered(lambda a: a.lot_id == lot)
+        rounding = self._rounding()
+        available = sum(candidates.mapped('available_to_return_qty'))
+        if float_compare(qty, available, precision_rounding=rounding) > 0:
+            raise ValidationError(_(
+                'Не може да се распредели враќање од %(qty).2f на '
+                '%(product)s по достапните лот-алокации (достапно само '
+                '%(avail).2f).',
+                qty=qty, product=self.product_id.name, avail=available,
+            ))
+        material_ctx = self.with_context(
+            skip_auto_picking=True,
+            skip_allocation_sum_check=True,
+        )
+        current_alloc_returned = sum(
+            self.lot_allocation_ids.mapped('returned_qty'))
+        material_ctx.returned_qty = current_alloc_returned + qty
+        self.invalidate_recordset(['returned_qty'])
+        self._sync_allocation_on_return(
+            qty, lot=lot or False, per_lot_enabled=per_lot)
+        material_ctx.returned_qty = sum(
+            self.lot_allocation_ids.mapped('returned_qty'))
+
+    def apply_take(self, qty, lot=False):
+        """Take ``qty`` of THIS material warehouse → vehicle (Реверс).
+
+        Creates a validated Реверс picking via the picking service, increments
+        ``taken_qty``, syncs per-lot allocations on take, and validates sums.
+
+        Args:
+            qty: quantity to take.
+            lot: stock.lot (required for lot/serial-tracked products).
+
+        Returns:
+            stock.picking: the validated picking, or an empty recordset when qty
+            is zero (no-op).
+        """
+        self.ensure_one()
+        rounding = self._rounding()
+        if float_is_zero(qty, precision_rounding=rounding):
+            return self.env['stock.picking']
+
+        job = self.job_id
+        picking_service = self.env['esfsm.stock.picking.service']
+        material_lines = [{
+            'material_line_id': self,
+            'product_id': self.product_id,
+            'product_uom_id': self.product_uom_id,
+            'quantity': qty,
+            'lot_id': lot if lot else False,
+        }]
+        picking = picking_service.create_reverse_picking_from_lines(
+            job, material_lines)
+
+        per_lot = self._is_per_lot_enabled()
+        material_ctx = self.with_context(
+            skip_auto_picking=True,
+            skip_allocation_sum_check=True,
+        )
+        # Mirror the take wizard: back-fill legacy lot_id if missing and bump the
+        # scalar before syncing allocations.
+        vals = {'taken_qty': material_ctx.taken_qty + qty}
+        if (not material_ctx.lot_id
+                and material_ctx.product_id.tracking != 'none' and lot):
+            vals['lot_id'] = lot.id
+        material_ctx.write(vals)
+        # Sync per-lot allocations from the validated picking (respects flag and
+        # untracked products internally) then hard-validate sums.
+        material_ctx._sync_allocation_on_take(picking, per_lot_enabled=per_lot)
+        self._validate_allocation_sums()
+        return picking
+
+    def apply_consume(self, qty, lot=False):
+        """Consume ``qty`` of THIS material vehicle → customer (Испратница).
+
+        Creates a validated Испратница picking, increments ``used_qty``, syncs
+        per-lot allocations on consume (FEFO, or lot-scoped when ``lot`` given),
+        and validates sums. Honors the capacity guard (over-consume raises a
+        localized ValidationError BEFORE any stock move, so no drift).
+
+        Returns:
+            stock.picking: the validated picking, or empty recordset when qty is
+            zero (no-op).
+        """
+        self.ensure_one()
+        rounding = self._rounding()
+        if float_is_zero(qty, precision_rounding=rounding):
+            return self.env['stock.picking']
+
+        per_lot = self._is_per_lot_enabled()
+
+        # Capacity guard FIRST — never move stock we cannot account for.
+        if per_lot and self.lot_allocation_ids:
+            candidates = self.lot_allocation_ids
+            if lot:
+                candidates = candidates.filtered(lambda a: a.lot_id == lot)
+            available = sum(candidates.mapped('available_to_consume_qty'))
+        else:
+            available = self.taken_qty - self.used_qty - self.returned_qty
+        if float_compare(qty, available, precision_rounding=rounding) > 0:
+            raise ValidationError(_(
+                'Не може да се потроши %(qty).2f на %(product)s — достапно само '
+                '%(avail).2f.',
+                qty=qty, product=self.product_id.name, avail=available,
+            ))
+
+        job = self.job_id
+        picking_service = self.env['esfsm.stock.picking.service']
+        material_lines = [{
+            'material_line_id': self,
+            'product_id': self.product_id,
+            'product_uom_id': self.product_uom_id,
+            'quantity': qty,
+            'lot_id': lot if lot else False,
+        }]
+        picking = picking_service.create_delivery_picking_from_lines(
+            job, material_lines)
+
+        if per_lot and self.lot_allocation_ids:
+            # Allocation distribution shared with the consume wizard. The guard
+            # above already vetted capacity, so the helper's guard is a no-op pass.
+            self._apply_consume_to_allocations(qty, lot=lot or False)
+        else:
+            # Legacy / untracked / flag-off: just the scalar.
+            self.with_context(
+                skip_auto_picking=True,
+                skip_allocation_sum_check=True,
+            ).used_qty = self.used_qty + qty
+
+        self._validate_allocation_sums()
+        return picking
+
+    def apply_return(self, qty, lot=False):
+        """Return ``qty`` of THIS material vehicle → warehouse (Повратница).
+
+        Creates a validated Повратница picking, increments ``returned_qty``,
+        syncs per-lot allocations on return (FEFO, or lot-scoped when ``lot``
+        given), and validates sums. Honors the capacity guard
+        (returned ≤ taken − used) BEFORE moving stock, so no drift.
+
+        Returns:
+            stock.picking: the validated picking, or empty recordset when qty is
+            zero (no-op).
+        """
+        self.ensure_one()
+        rounding = self._rounding()
+        if float_is_zero(qty, precision_rounding=rounding):
+            return self.env['stock.picking']
+
+        per_lot = self._is_per_lot_enabled()
+
+        # Capacity guard FIRST.
+        if per_lot and self.lot_allocation_ids:
+            candidates = self.lot_allocation_ids
+            if lot:
+                candidates = candidates.filtered(lambda a: a.lot_id == lot)
+            available = sum(candidates.mapped('available_to_return_qty'))
+        else:
+            available = self.taken_qty - self.used_qty - self.returned_qty
+        if float_compare(qty, available, precision_rounding=rounding) > 0:
+            raise ValidationError(_(
+                'Не може да се врати %(qty).2f на %(product)s — достапно само '
+                '%(avail).2f.',
+                qty=qty, product=self.product_id.name, avail=available,
+            ))
+
+        job = self.job_id
+        picking_service = self.env['esfsm.stock.picking.service']
+        material_lines = [{
+            'material_line_id': self,
+            'product_id': self.product_id,
+            'product_uom_id': self.product_uom_id,
+            'quantity': qty,
+            'lot_id': lot if lot else False,
+        }]
+        picking = picking_service.create_return_picking_from_lines(
+            job, material_lines)
+
+        if per_lot and self.lot_allocation_ids:
+            # Allocation distribution shared with the return wizard. The guard
+            # above already vetted capacity, so the helper's guard is a no-op pass.
+            self._apply_return_to_allocations(qty, lot=lot or False)
+        else:
+            self.with_context(
+                skip_auto_picking=True,
+                skip_allocation_sum_check=True,
+            ).returned_qty = self.returned_qty + qty
+
+        self._validate_allocation_sums()
+        return picking
+
+    # ──────────────────────────────────────────────
     # Drift detection (cron)
     # ──────────────────────────────────────────────
 
