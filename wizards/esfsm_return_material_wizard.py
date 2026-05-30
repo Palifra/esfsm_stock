@@ -81,6 +81,8 @@ class EsfsmReturnMaterialWizard(models.TransientModel):
         picking_service = self.env['esfsm.stock.picking.service']
         picking = picking_service.create_return_picking(job, lines_to_return)
 
+        per_lot = self.env['esfsm.job.material']._is_per_lot_enabled()
+
         touched_materials = set()
         for line in lines_to_return:
             material = line.material_line_id
@@ -89,6 +91,47 @@ class EsfsmReturnMaterialWizard(models.TransientModel):
                 line.allocation_id.with_context(
                     skip_allocation_sum_check=True,
                 ).returned_qty = line.allocation_id.returned_qty + line.return_qty
+            elif material.lot_allocation_ids:
+                # Material HAS allocations but THIS line carries no allocation_id
+                # (aggregate / legacy line that slipped through). Without this
+                # branch the return falls through every case and the
+                # sum(allocations) rebuild below silently DROPS it → drift.
+                # Distribute it FEFO across allocations via the model helper.
+                #
+                # Capacity guard: if the return exceeds the available headroom
+                # across the candidate allocations, raise a clear localized
+                # error instead of silently dropping the remainder.
+                candidates = material.lot_allocation_ids
+                if line.lot_id:
+                    candidates = candidates.filtered(
+                        lambda a: a.lot_id == line.lot_id)
+                rounding = material._rounding()
+                available = sum(candidates.mapped('available_to_return_qty'))
+                if float_compare(line.return_qty, available,
+                                 precision_rounding=rounding) > 0:
+                    raise ValidationError(_(
+                        'Не може да се распредели враќање од %(qty).2f на '
+                        '%(product)s по достапните лот-алокации (достапно само '
+                        '%(avail).2f).',
+                        qty=line.return_qty, product=material.product_id.name,
+                        avail=available,
+                    ))
+                # Pre-set the scalar to the post-distribution target (current
+                # allocation sum + this return) so the sum-check inside
+                # _sync_allocation_on_return ties out at validation time. The
+                # final rebuild below re-derives the same value, so there is no
+                # double count.
+                current_alloc_returned = sum(
+                    material.lot_allocation_ids.mapped('returned_qty'))
+                material.with_context(
+                    skip_auto_picking=True,
+                    skip_allocation_sum_check=True,
+                ).returned_qty = current_alloc_returned + line.return_qty
+                material.invalidate_recordset(['returned_qty'])
+                material._sync_allocation_on_return(
+                    line.return_qty, lot=line.lot_id or False,
+                    per_lot_enabled=per_lot,
+                )
             if not material.lot_allocation_ids and not line.allocation_id:
                 material.with_context(
                     skip_auto_picking=True,
