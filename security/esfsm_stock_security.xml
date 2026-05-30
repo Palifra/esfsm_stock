@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- ================================================================
+         Child-record visibility (IDOR fix) for material lifecycle models.
+         esfsm.job.material and esfsm.job.material.lot had ACL grants to
+         group_esfsm_user but NO record rule, so any FSM user could read or
+         modify material quantities, lots and cost data (cost_price/value)
+         of ANY job. Odoo does not propagate the parent esfsm.job rule to
+         standalone _name children, so each child gets its own rule chaining
+         through job_id, plus a broad manager rule (managers are also
+         group_esfsm_user and would otherwise inherit the restrictive domain).
+         ================================================================ -->
+
+    <!-- Material lines -->
+    <record id="esfsm_job_material_rule_user" model="ir.rule">
+        <field name="name">FSM Material: User Access</field>
+        <field name="model_id" ref="model_esfsm_job_material"/>
+        <field name="groups" eval="[(4, ref('esfsm.group_esfsm_user'))]"/>
+        <field name="domain_force">[
+            '|', '|',
+                ('job_id.employee_ids.user_id', '=', user.id),
+                ('job_id.team_id.member_ids.user_id', '=', user.id),
+                ('job_id.create_uid', '=', user.id)
+        ]</field>
+    </record>
+    <record id="esfsm_job_material_rule_manager" model="ir.rule">
+        <field name="name">FSM Material: Manager Access</field>
+        <field name="model_id" ref="model_esfsm_job_material"/>
+        <field name="groups" eval="[(4, ref('esfsm.group_esfsm_manager'))]"/>
+        <field name="domain_force">['|', ('company_id', '=', False), ('company_id', 'in', company_ids)]</field>
+    </record>
+
+    <!-- Per-lot allocations (lot + cost lifecycle) -->
+    <record id="esfsm_job_material_lot_rule_user" model="ir.rule">
+        <field name="name">FSM Material Lot: User Access</field>
+        <field name="model_id" ref="model_esfsm_job_material_lot"/>
+        <field name="groups" eval="[(4, ref('esfsm.group_esfsm_user'))]"/>
+        <field name="domain_force">[
+            '|', '|',
+                ('job_id.employee_ids.user_id', '=', user.id),
+                ('job_id.team_id.member_ids.user_id', '=', user.id),
+                ('job_id.create_uid', '=', user.id)
+        ]</field>
+    </record>
+    <record id="esfsm_job_material_lot_rule_manager" model="ir.rule">
+        <field name="name">FSM Material Lot: Manager Access</field>
+        <field name="model_id" ref="model_esfsm_job_material_lot"/>
+        <field name="groups" eval="[(4, ref('esfsm.group_esfsm_manager'))]"/>
+        <field name="domain_force">['|', ('company_id', '=', False), ('company_id', 'in', company_ids)]</field>
+    </record>
+
+</odoo>

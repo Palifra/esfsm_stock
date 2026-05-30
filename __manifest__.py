@@ -62,6 +62,7 @@ Technical Details
     'data': [
         # Security
         'security/ir.model.access.csv',
+        'security/esfsm_stock_security.xml',
 
         # Data
         'data/stock_location_data.xml',
