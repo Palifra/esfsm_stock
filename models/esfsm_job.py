@@ -3,6 +3,7 @@
 
 from odoo import api, models, fields, _
 from odoo.exceptions import ValidationError
+from odoo.tools import float_compare
 
 
 class EsfsmJob(models.Model):
@@ -72,20 +73,30 @@ class EsfsmJob(models.Model):
 
     @api.depends('material_ids.taken_qty', 'material_ids.used_qty', 'material_ids.returned_qty')
     def _compute_has_materials_to_consume(self):
-        """Check if there are taken materials that can be consumed"""
+        """Check if there are taken materials that can be consumed.
+
+        UoM-aware compare: a sub-rounding residue (taken-used-returned smaller
+        than the product's UoM step) must NOT keep the flag stuck True."""
         for job in self:
             # Materials that are taken but not fully consumed/returned
             job.has_materials_to_consume = any(
-                (m.taken_qty - m.used_qty - m.returned_qty) > 0
+                float_compare(
+                    m.taken_qty - m.used_qty - m.returned_qty, 0.0,
+                    precision_rounding=m.product_uom_id.rounding or 0.001) > 0
                 for m in job.material_ids
             )
 
     @api.depends('material_ids.taken_qty', 'material_ids.used_qty', 'material_ids.returned_qty')
     def _compute_has_materials_to_return(self):
-        """Check if there are materials that need to be returned"""
+        """Check if there are materials that need to be returned.
+
+        UoM-aware compare: a sub-rounding residue must NOT flag a material as
+        unreturned."""
         for job in self:
             materials_to_return = job.material_ids.filtered(
-                lambda m: (m.taken_qty - m.used_qty - m.returned_qty) > 0
+                lambda m: float_compare(
+                    m.taken_qty - m.used_qty - m.returned_qty, 0.0,
+                    precision_rounding=m.product_uom_id.rounding or 0.001) > 0
             )
             job.has_materials_to_return = bool(materials_to_return)
             job.materials_to_return_count = len(materials_to_return)
@@ -218,9 +229,13 @@ class EsfsmJob(models.Model):
         """
         self.ensure_one()
 
-        # Check for unreturned materials
+        # Check for unreturned materials. UoM-aware compare so a sub-rounding
+        # residue (e.g. 0.00007, or a leftover below a coarse UoM step) does not
+        # permanently block completion with a false "unreturned materials" error.
         unreturned_materials = self.material_ids.filtered(
-            lambda m: m.available_to_return_qty > 0
+            lambda m: float_compare(
+                m.available_to_return_qty, 0.0,
+                precision_rounding=m.product_uom_id.rounding or 0.001) > 0
         )
 
         if unreturned_materials:

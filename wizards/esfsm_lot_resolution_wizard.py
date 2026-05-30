@@ -19,7 +19,7 @@ Flow:
 
 from odoo import api, fields, models, _
 from odoo.exceptions import ValidationError
-from odoo.tools import float_compare
+from odoo.tools import float_compare, float_round
 
 
 class EsfsmLotResolutionWizard(models.TransientModel):
@@ -180,17 +180,36 @@ class EsfsmLotResolutionWizard(models.TransientModel):
         for mid, lines in by_material.items():
             material = self.env['esfsm.job.material'].browse(mid)
             migration._snapshot_legacy(material)
-            total_alloc = sum(l.qty for l in lines)
-            for line in lines:
-                if line.qty <= 0:
-                    continue
-                ratio = line.qty / total_alloc if total_alloc else 0
+            rounding = material._rounding()
+            positive_lines = [l for l in lines if l.qty > 0]
+            total_alloc = sum(l.qty for l in positive_lines)
+            if not positive_lines or total_alloc <= 0:
+                continue
+
+            # Proportional split of used/returned with residual reconciliation,
+            # so per-lot sums tie EXACTLY to the material scalar (otherwise
+            # 1/3+1/3+1/3 of used=10 → 9.99 trips _check_lot_sum_matches). taken
+            # stays exactly as the user-entered qty. Reuse the migration helper
+            # for the residual logic; map its result back per lot.
+            distributed = migration._split_proportional(
+                [(l.lot_id.id, l.qty) for l in positive_lines],
+                total_alloc,
+                material_taken=total_alloc,
+                material_used=material.used_qty,
+                material_returned=material.returned_qty,
+                rounding=rounding,
+            )
+            split_by_lot = {d['lot_id']: d for d in distributed}
+            for line in positive_lines:
+                d = split_by_lot[line.lot_id.id]
                 Allocation.with_context(skip_allocation_sum_check=True).create({
                     'material_id': material.id,
                     'lot_id': line.lot_id.id,
-                    'taken_qty': line.qty,
-                    'used_qty': material.used_qty * ratio,
-                    'returned_qty': material.returned_qty * ratio,
+                    # Keep the user's exact entry for taken; only used/returned
+                    # carry the reconciled proportional split.
+                    'taken_qty': float_round(line.qty, precision_rounding=rounding),
+                    'used_qty': d['used_qty'],
+                    'returned_qty': d['returned_qty'],
                 })
                 created += 1
             material.invalidate_recordset()

@@ -17,10 +17,12 @@ Flow:
 """
 
 import logging
+import math
 from collections import defaultdict
 
 from odoo import api, models, fields, _
 from odoo.exceptions import UserError
+from odoo.tools import float_is_zero, float_round
 
 _logger = logging.getLogger(__name__)
 
@@ -252,21 +254,26 @@ class EsfsmLotAllocationMigration(models.AbstractModel):
             if total_picking_qty <= 0:
                 continue
             self._snapshot_legacy(material)
-            # Proportional split based on picking ratios
-            material_taken = material.taken_qty
-            material_used = material.used_qty
-            material_returned = material.returned_qty
-            for lot_id, picking_qty in entry['lots']:
-                ratio = picking_qty / total_picking_qty
-                alloc_taken = material_taken * ratio
-                alloc_used = material_used * ratio
-                alloc_returned = material_returned * ratio
+            # Proportional split with residual reconciliation: per-lot values are
+            # rounded to UoM precision so per-lot sums tie exactly to the material
+            # scalar (otherwise 1/3+1/3+1/3 of 10 → 9.99 trips _check_lot_sum_matches)
+            # while preserving used+returned<=taken per lot (matters under coarse
+            # UoM rounding — see _split_proportional).
+            rounding = material._rounding()
+            distributed = self._split_proportional(
+                entry['lots'], total_picking_qty,
+                material_taken=material.taken_qty,
+                material_used=material.used_qty,
+                material_returned=material.returned_qty,
+                rounding=rounding,
+            )
+            for d in distributed:
                 Allocation.with_context(skip_allocation_sum_check=True).create({
                     'material_id': material.id,
-                    'lot_id': lot_id,
-                    'taken_qty': alloc_taken,
-                    'used_qty': alloc_used,
-                    'returned_qty': alloc_returned,
+                    'lot_id': d['lot_id'],
+                    'taken_qty': d['taken_qty'],
+                    'used_qty': d['used_qty'],
+                    'returned_qty': d['returned_qty'],
                 })
                 created_allocs += 1
 
@@ -292,6 +299,138 @@ class EsfsmLotAllocationMigration(models.AbstractModel):
             'allocations_created': created_allocs,
             'gap_flagged': flagged_gap,
         }
+
+    @api.model
+    def _split_proportional(self, lots, total_picking_qty,
+                            material_taken, material_used, material_returned,
+                            rounding):
+        """Split material scalars (taken/used/returned) proportionally across
+        `lots` (a list of (lot_id, picking_qty) pairs) by picking ratio, with
+        residual reconciliation so per-lot sums tie EXACTLY to each scalar.
+
+        Each per-lot value is rounded to UoM precision via a capped
+        largest-remainder apportionment, so the per-lot sums reconcile to each
+        material scalar AND every lot preserves the allocation-model invariant
+        ``used_qty + returned_qty <= taken_qty`` (within UoM rounding). The
+        latter matters under COARSE UoM rounding (> 0.01, e.g. pack-of-50
+        rounding 1.0): a naïve per-field rounding + largest-sink residual can
+        round `used`/`returned` up on a small lot past its `taken`, which would
+        trip esfsm.job.material.lot._check_used_quantity /
+        _check_returned_quantity and roll back the whole migration/resolution.
+
+        Mechanics:
+          * ``taken`` is apportioned by picking ratio with no cross-field cap
+            (largest-remainder hands the rounding leftover to the lots with the
+            biggest fractional part — in the common 2-decimal case this is the
+            largest lot, matching the previous largest-sink behaviour).
+          * ``used`` is apportioned with each lot capped at its ``taken``.
+          * ``returned`` is apportioned with each lot capped at its remaining
+            ``taken - used`` headroom.
+        When a lot's cap is binding, the residual spills to the next lot with
+        headroom (most headroom first), so the invariant always holds while the
+        per-field totals still reconcile exactly.
+
+        Returns a list of dicts: [{'lot_id', 'taken_qty', 'used_qty',
+        'returned_qty'}, ...] in input order. Returns [] if total_picking_qty<=0.
+        """
+        rounding = rounding or 0.001
+        if total_picking_qty <= 0 or not lots:
+            return []
+
+        rows = [{'lot_id': lot_id, 'picking_qty': picking_qty}
+                for lot_id, picking_qty in lots]
+        weights = [r['picking_qty'] for r in rows]
+
+        # taken: no cross-field constraint → uncapped proportional apportionment.
+        self._apportion_capped(rows, 'taken_qty', material_taken,
+                               weights, None, rounding)
+        # used: cap each lot at its taken_qty (used <= taken).
+        self._apportion_capped(
+            rows, 'used_qty', material_used, weights,
+            [r['taken_qty'] for r in rows], rounding)
+        # returned: cap each lot at remaining headroom (returned <= taken - used).
+        self._apportion_capped(
+            rows, 'returned_qty', material_returned, weights,
+            [float_round(r['taken_qty'] - r['used_qty'],
+                         precision_rounding=rounding) for r in rows],
+            rounding)
+
+        # Drop the helper-only picking_qty key before returning.
+        for r in rows:
+            r.pop('picking_qty', None)
+        return rows
+
+    @api.model
+    def _apportion_capped(self, rows, field, total, weights, caps, rounding):
+        """Write `field` on each row in `rows` so the values are a UoM-rounded
+        apportionment of `total` by `weights`, optionally bounded per-row by
+        `caps`, with the per-row sum reconciling EXACTLY to float_round(total).
+
+        Largest-remainder method: floor each lot's ideal share to UoM units
+        (clamped to its cap), then hand out the remaining whole rounding-steps
+        to the lots with the biggest fractional remainder that still have cap
+        headroom (or claw back over-assignment from the smallest remainders).
+        `caps=None` means uncapped. Mutates `rows` in place.
+        """
+        n = len(rows)
+        total_weight = sum(weights)
+        if float_is_zero(total, precision_rounding=rounding) or total_weight <= 0:
+            for r in rows:
+                r[field] = 0.0
+            return
+
+        # Work in integer rounding-units to keep the residual arithmetic exact.
+        target_units = int(round(total / rounding))
+        if caps is None:
+            cap_units = [target_units] * n
+        else:
+            cap_units = [max(0, int(round(caps[i] / rounding))) for i in range(n)]
+
+        ideal = [total * weights[i] / total_weight for i in range(n)]
+        floor_units = [
+            min(int(math.floor(ideal[i] / rounding + 1e-9)), cap_units[i])
+            for i in range(n)
+        ]
+        frac = [
+            ideal[i] / rounding - math.floor(ideal[i] / rounding + 1e-9)
+            for i in range(n)
+        ]
+        remaining = target_units - sum(floor_units)
+
+        # Hand out leftover steps to the biggest remainders that have headroom.
+        up_order = sorted(range(n), key=lambda i: (-frac[i], -weights[i], i))
+        while remaining > 0:
+            progressed = False
+            for i in up_order:
+                if remaining <= 0:
+                    break
+                if floor_units[i] < cap_units[i]:
+                    floor_units[i] += 1
+                    remaining -= 1
+                    progressed = True
+            if not progressed:
+                # All caps saturated — only happens if `total` exceeds the sum of
+                # caps, i.e. the scalar is globally infeasible (callers guarantee
+                # used<=taken and used+returned<=taken, so this is unreachable).
+                break
+
+        # Claw back any over-assignment (cap-flooring can overshoot the target).
+        down_order = sorted(range(n), key=lambda i: (frac[i], weights[i], i))
+        while remaining < 0:
+            progressed = False
+            for i in down_order:
+                if remaining >= 0:
+                    break
+                if floor_units[i] > 0:
+                    floor_units[i] -= 1
+                    remaining += 1
+                    progressed = True
+            if not progressed:
+                break
+
+        for i in range(n):
+            rows[i][field] = float_round(
+                floor_units[i] * rounding, precision_rounding=rounding)
 
     @api.model
     def _snapshot_legacy(self, material):
