@@ -3,6 +3,7 @@
 
 from odoo import models, fields, _
 from odoo.exceptions import UserError
+from odoo.tools import float_compare, float_is_zero
 
 
 class StockPickingService(models.AbstractModel):
@@ -161,19 +162,91 @@ class StockPickingService(models.AbstractModel):
         # Validate picking
         picking.action_confirm()
         picking.action_assign()
-        
-        # Set quantities done for all moves
-        for move in picking.move_ids:
-            if not move.move_line_ids:
-                move.quantity = move.product_uom_qty
-            else:
-                for ml in move.move_line_ids:
-                    if not ml.quantity:
-                        ml.quantity = move.product_uom_qty
-        
+
+        # Finalize done quantities (distribute remaining demand; guard negative
+        # vehicle/technician stock). Extracted so the logic is unit-testable.
+        self._finalize_picking_quantities(picking)
+
         picking.button_validate()
-        
+
         return picking
+
+    def _finalize_picking_quantities(self, picking):
+        """Set the done quantity on every move/line WITHOUT inflating demand.
+
+        Replaces the old finalizer which forced ``move.product_uom_qty`` onto
+        EVERY unfilled move line. When action_assign() reserved a move across
+        several lots/locations (K move lines), that produced
+        ``done = K * demand`` (multi-lot inflation) and, for internal vehicle
+        sources, drove stock negative because no availability was checked.
+
+        New behavior, per move:
+
+        1. Negative-stock guard (EARLY, FRIENDLY check — not the sole defense).
+           If the source is an *internal* location (vehicle/technician), the
+           on-hand qty at that location must cover the demand; otherwise raise a
+           localized UserError. NOTE: this uses physical ``qty_available`` (not
+           reservation-aware ``free_qty``) and is NOT lot-filtered, so it catches
+           the common whole-product shortfall early with a clear message but is
+           not airtight. The authoritative backstop against negative stock is OCA
+           ``stock_no_negative`` (active in production; it self-disables only
+           under --test-enable, which is exactly why the test for this guard is
+           load-bearing). Warehouse-sourced reverse takes also flow through here,
+           but the warehouse normally has stock, so this simply confirms it.
+
+        2. No reserved lines -> set the single done quantity to the demand
+           (non-tracked or unreserved moves).
+
+        3. Reserved lines -> distribute only the REMAINING demand
+           (``demand - already-assigned``) across the unfilled (zero-qty) lines.
+           For our flows there is normally at most one unfilled line after the
+           create-branch line, but the loop is written to be correct for several
+           unfilled lines too: each unfilled line takes up to the whole
+           remainder, and once the remainder is exhausted the rest stay at zero.
+           We intentionally do NOT spread a fixed share per line — Odoo's
+           reservation already sized the genuinely reserved lines, and any
+           leftover unreserved line should absorb exactly what is missing, never
+           a full extra demand. (If several unfilled lines exist they are filled
+           in order; the first one normally consumes the entire remainder, which
+           is the real-world case for a single create-branch line.)
+
+        Args:
+            picking: stock.picking record (already confirmed + assigned)
+        """
+        for move in picking.move_ids:
+            rounding = move.product_uom.rounding
+            demand = move.product_uom_qty
+
+            # (1) Negative-stock guard for internal (vehicle/technician) sources.
+            if move.location_id.usage == 'internal':
+                available = move.product_id.with_context(
+                    location=move.location_id.id).qty_available
+                if float_compare(available, demand,
+                                 precision_rounding=rounding) < 0:
+                    raise UserError(_(
+                        'Недоволно залиха за "%s" на локација %s: '
+                        'бара %s, достапно %s.'
+                    ) % (move.product_id.name,
+                         move.location_id.display_name,
+                         demand, available))
+
+            # (2) No reserved lines -> single done quantity = demand.
+            if not move.move_line_ids:
+                move.quantity = demand
+                continue
+
+            # (3) Distribute only the REMAINING demand across unfilled lines.
+            assigned = sum(move.move_line_ids.mapped('quantity'))
+            remaining = demand - assigned
+            if float_compare(remaining, 0.0,
+                             precision_rounding=rounding) > 0:
+                for ml in move.move_line_ids:
+                    if float_is_zero(remaining, precision_rounding=rounding):
+                        break
+                    if float_is_zero(ml.quantity, precision_rounding=rounding):
+                        # This unfilled line absorbs the whole remainder.
+                        ml.quantity = remaining
+                        remaining = 0.0
 
     def create_reverse_picking(self, job, wizard_lines):
         """
