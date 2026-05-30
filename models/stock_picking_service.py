@@ -152,6 +152,8 @@ class StockPickingService(models.AbstractModel):
                 'picking_id': picking.id,
                 'location_id': source_location.id,
                 'location_dest_id': dest_location.id,
+                'esfsm_material_line_id': line_data['material_line_id'].id
+                                          if line_data.get('material_line_id') else False,
             })
             
             # Handle lot tracking if applicable

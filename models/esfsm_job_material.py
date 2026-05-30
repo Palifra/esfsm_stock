@@ -315,8 +315,13 @@ class EsfsmJobMaterial(models.Model):
                 name=picking.name, state=picking.state,
             ))
 
+        # The product-match fallback is intended ONLY for whole-legacy pickings (no move carries esfsm_material_line_id); every move in a newly created picking is always attributed, so mixed-attribution double-count cannot occur.
         move_lines = picking.move_line_ids.filtered(
-            lambda ml: ml.product_id == self.product_id and ml.lot_id and ml.quantity > 0
+            lambda ml: ml.quantity > 0 and ml.lot_id and (
+                ml.move_id.esfsm_material_line_id == self
+                or (not ml.move_id.esfsm_material_line_id
+                    and ml.product_id == self.product_id)
+            )
         )
         if not move_lines:
             return
