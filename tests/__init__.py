@@ -4,3 +4,4 @@
 from . import test_esfsm_stock
 from . import test_lot_allocation
 from . import test_migration
+from . import test_picking_service_lots

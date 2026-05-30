@@ -84,11 +84,21 @@ class StockPickingService(models.AbstractModel):
                 'Проверете ја материјалната линија или визардот.'
             ) % move.product_id.name)
 
-        # For lot-tracked products, set lot on move lines
+        # For lot-tracked products, stamp the lot on move lines WITHOUT
+        # inflating qty.
         if move.move_line_ids:
-            for move_line in move.move_line_ids:
-                move_line.lot_id = lot_id
-                move_line.quantity = move.product_uom_qty
+            lines = move.move_line_ids
+            if len(lines) == 1:
+                lines.lot_id = lot_id
+                lines.quantity = move.product_uom_qty
+            else:
+                # Multiple reserved lines (multi-lot / FEFO split). action_assign()
+                # already reserved the correct per-line quantities — do NOT touch
+                # them (overwriting them was the inflation bug). Only stamp the
+                # caller lot on lines that don't already carry one.
+                for ml in lines:
+                    if not ml.lot_id:
+                        ml.lot_id = lot_id
         else:
             # If no move lines exist, create one with lot
             self.env['stock.move.line'].create({
