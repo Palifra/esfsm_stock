@@ -323,28 +323,58 @@ class TestLotAllocation(TransactionCase):
 
     def test_40_idempotent_take_on_retry(self):
         """M3 fix: _sync_allocation_on_take with same picking (state=done,
-        synced flag set) must be a no-op on second call."""
+        already recorded on the allocation) must be a no-op on second call.
+
+        ``stock.picking.state`` is a stored COMPUTED field, so forcing it with
+        raw SQL + invalidate is immediately overwritten the next time the ORM
+        recomputes it from the moves — the old trick left the picking at
+        'draft' and the picking-service guard rejected the sync. Build a
+        genuinely validated (state='done') picking through the real flow
+        instead, so the idempotency path is actually exercised. The
+        per-(material, picking) idempotency is keyed on
+        ``allocation.source_picking_ids``; we pre-record this picking there
+        (simulating the first sync) and assert the second sync does NOT
+        double-increment.
+        """
         self._enable_flag()
-        # Fake a minimal "done" picking — just enough for idempotency check
-        picking = self.env['stock.picking'].create({
-            'picking_type_id': self.env.ref('stock.picking_type_internal').id,
-            'location_id': self.env.ref('stock.stock_location_stock').id,
-            'location_dest_id': self.env.ref('stock.stock_location_customers').id,
-        })
-        # Manually simulate a validated synced picking
-        picking.sudo().write({
-            'esfsm_allocation_synced': True,
-        })
-        # Force state=done via bypass (test-only)
-        self.env.cr.execute(
-            "UPDATE stock_picking SET state='done' WHERE id = %s",
-            (picking.id,),
+        src = self.env.ref('stock.stock_location_stock')
+        dest = self.env.ref('stock.stock_location_customers')
+        # Seed lot_a stock at the source so the picking can be reserved + done.
+        self.env['stock.quant']._update_available_quantity(
+            self.product, src, 5.0, lot_id=self.lot_a,
         )
-        picking.invalidate_recordset(['state'])
+        picking = self.env['stock.picking'].create({
+            'picking_type_id': self.env.ref('stock.picking_type_out').id,
+            'location_id': src.id,
+            'location_dest_id': dest.id,
+        })
+        self.env['stock.move'].create({
+            'name': 'idempotency take',
+            'product_id': self.product.id,
+            'product_uom_qty': 5.0,
+            'product_uom': self.product.uom_id.id,
+            'picking_id': picking.id,
+            'location_id': src.id,
+            'location_dest_id': dest.id,
+        })
+        picking.action_confirm()
+        picking.action_assign()
+        # Finalize the reserved move line (lot reserved by action_assign).
+        for ml in picking.move_line_ids:
+            ml.quantity = 5.0
+            if not ml.lot_id:
+                ml.lot_id = self.lot_a
+        picking.button_validate()
+        self.assertEqual(picking.state, 'done')  # genuinely validated
+
         material = self._material(taken_qty=5.0)
-        # Add prior allocation (simulating first sync)
-        self._alloc(material, self.lot_a, taken_qty=5.0)
-        # Second sync attempt — must not double-increment
+        # Add prior allocation AND record this picking as already-synced
+        # (simulating the first sync that already credited these 5 units).
+        alloc = self._alloc(material, self.lot_a, taken_qty=5.0)
+        alloc.with_context(skip_allocation_sum_check=True).source_picking_ids = [
+            (4, picking.id)
+        ]
+        # Second sync attempt — must not double-increment.
         material._sync_allocation_on_take(picking)
         self.assertEqual(material.lot_allocation_ids.taken_qty, 5.0)
 

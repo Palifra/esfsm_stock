@@ -221,7 +221,7 @@ class TestFleetStockIntegration(TestEsfsmStock):
             'model_id': self.vehicle_model.id,
         })
 
-        parent_location = self.env.ref('esfsm_stock.stock_location_vehicles')
+        parent_location = self.env.ref('eskon_reverse.stock_location_vehicles')
         self.assertEqual(vehicle.stock_location_id.location_id, parent_location)
 
     def test_04_team_vehicle_field(self):
@@ -299,6 +299,35 @@ class TestLocationPriorityLogic(TestEsfsmStock):
 class TestAddMaterialWizard(TestEsfsmStock):
     """Test Add Material Wizard"""
 
+    def setUp(self):
+        """Ensure the Add wizard's source location physically holds stock.
+
+        The Add wizard validates availability against
+        ``picking_type.default_location_src_id`` (Реверс / internal fallback,
+        else ``stock.stock_location_stock``) before creating the Реверс picking.
+        In a restored production DB the freshly-created test product has zero
+        stock there, so the availability guard ('Нема доволно залиха ...
+        достапно 0.00') trips. Mirror the resolution the wizard itself performs
+        and seed the same location.
+        """
+        super().setUp()
+        picking_type = self.env['stock.picking.type'].search([
+            ('name', '=', 'Реверс'),
+            ('company_id', '=', self.job.company_id.id),
+        ], limit=1)
+        if not picking_type:
+            picking_type = self.env['stock.picking.type'].search([
+                ('code', '=', 'internal'),
+                ('company_id', '=', self.job.company_id.id),
+            ], limit=1)
+        add_source_location = (
+            picking_type.default_location_src_id
+            or self.env.ref('stock.stock_location_stock')
+        )
+        self.env['stock.quant']._update_available_quantity(
+            self.product, add_source_location, 100.0,
+        )
+
     def test_01_wizard_creation(self):
         """Test wizard can be created"""
         wizard = self.env['esfsm.add.material.wizard'].create({
@@ -373,8 +402,22 @@ class TestReturnMaterialWizard(TestEsfsmStock):
     """Test Return Material Wizard"""
 
     def setUp(self):
-        """Set up test material for return"""
+        """Set up test material for return (with physical stock).
+
+        The return wizard validates + posts a Повратница picking whose source is
+        ``job._get_source_location()`` — for this bare job that resolves to the
+        warehouse ``lot_stock_id`` (an internal location). The picking service's
+        negative-stock guard rejects the move unless that location physically
+        holds the goods, so seed it.
+        """
         super().setUp()
+        warehouse = self.env['stock.warehouse'].search([
+            ('company_id', '=', self.job.company_id.id)
+        ], limit=1)
+        self.source_location = warehouse.lot_stock_id
+        self.env['stock.quant']._update_available_quantity(
+            self.product, self.source_location, 100.0,
+        )
         self.material = self._create_material(
             taken_qty=10.0,
             used_qty=6.0,
@@ -392,7 +435,9 @@ class TestReturnMaterialWizard(TestEsfsmStock):
         line = wizard.line_ids[0]
         self.assertEqual(line.product_id, self.product)
         self.assertEqual(line.available_qty, 4.0)  # 10.0 - 6.0
-        self.assertEqual(line.return_qty, 4.0)  # Default to full return
+        # Phase 4 default_get pre-fills return_qty=0.0 (user enters the amount);
+        # the old "default to full return" behavior was removed.
+        self.assertEqual(line.return_qty, 0.0)
 
     def test_02_wizard_returns_material(self):
         """Test wizard updates returned_qty"""
@@ -404,6 +449,9 @@ class TestReturnMaterialWizard(TestEsfsmStock):
 
         self.assertEqual(self.material.returned_qty, 0.0)
 
+        # default_get no longer pre-fills the full amount; request the full
+        # returnable quantity explicitly before confirming.
+        wizard.line_ids[0].write({'return_qty': 4.0})
         wizard.action_confirm()
 
         self.assertEqual(self.material.returned_qty, 4.0)
@@ -705,9 +753,28 @@ class TestConsumeMaterialWizard(TestEsfsmStock):
     """Test Consume Material Wizard"""
 
     def setUp(self):
-        """Set up test material for consumption"""
+        """Set up test material for consumption (with physical stock).
+
+        The consume wizard validates + posts an Испратница picking whose source
+        is ``job._get_source_location()`` — for this bare job that resolves to
+        the warehouse ``lot_stock_id`` (an internal location). The picking
+        service's negative-stock guard rejects the move unless that location
+        physically holds the goods, so seed it.
+        """
         super().setUp()
+        warehouse = self.env['stock.warehouse'].search([
+            ('company_id', '=', self.job.company_id.id)
+        ], limit=1)
+        self.source_location = warehouse.lot_stock_id
+        self.env['stock.quant']._update_available_quantity(
+            self.product, self.source_location, 100.0,
+        )
+        # Mirror the real lifecycle: material is PLANNED (10) and then TAKEN (10)
+        # before it can be consumed. The consume wizard's action_confirm caps
+        # total used_qty at planned_qty, so planned_qty must cover what we take
+        # and consume (otherwise: "Вкупно потрошено ... поголемо од планираното").
         self.material = self._create_material(
+            planned_qty=10.0,
             taken_qty=10.0,
             used_qty=0.0,
         )
@@ -742,9 +809,21 @@ class TestConsumeMaterialWizard(TestEsfsmStock):
         self.assertEqual(self.material.used_qty, 6.0)
         self.assertEqual(self.material.available_to_return_qty, 4.0)
 
-        # Check picking created
-        self.assertEqual(result['res_model'], 'stock.picking')
-        picking = self.env['stock.picking'].browse(result['res_id'])
+        # Check picking created.
+        # When material still remains to be returned (here 10 taken - 6 used = 4),
+        # action_confirm returns a 'continue-to-return' display_notification action
+        # that nests the created picking under params['next'] instead of returning
+        # a bare ir.actions.act_window. Resolve the picking from either shape so the
+        # picking assertions stay meaningful.
+        if result.get('res_model') == 'stock.picking':
+            picking_id = result['res_id']
+        else:
+            self.assertEqual(result['type'], 'ir.actions.client')
+            self.assertEqual(result['tag'], 'display_notification')
+            nxt = result['params']['next']
+            self.assertEqual(nxt['res_model'], 'stock.picking')
+            picking_id = nxt['res_id']
+        picking = self.env['stock.picking'].browse(picking_id)
         self.assertEqual(picking.esfsm_job_id, self.job)
         self.assertIn('Испратница', picking.origin)
 
