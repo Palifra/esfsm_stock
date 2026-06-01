@@ -86,6 +86,21 @@ class EsfsmLotAllocationMigration(models.AbstractModel):
                 'material_ids': mids,
             })
 
+        # Batch the picking-lot lookup for every candidate (job, product) pair
+        # in ONE grouped aggregation instead of a fresh 3-table-JOIN per material
+        # (was N round-trips). Candidates are the tracked, not-already-migrated,
+        # non-ambiguous materials — exactly the lines that reach the per-material
+        # _get_picking_lot_qtys call below. See _batch_picking_lot_qtys for the
+        # identical semantics ({lot_id: qty} keyed by (job_id, product_id)).
+        candidate_pairs = {
+            (m.job_id.id, m.product_id.id)
+            for m in materials
+            if m.product_tracking != 'none'
+            and not m.lot_allocation_ids
+            and m.id not in ambiguous_material_ids
+        }
+        batched_lot_qtys = self._batch_picking_lot_qtys(candidate_pairs)
+
         for m in materials:
             if m.product_tracking == 'none':
                 result['untracked'] += 1
@@ -100,8 +115,9 @@ class EsfsmLotAllocationMigration(models.AbstractModel):
                 # Tracked ambiguous lines still need resolution, but counted in 'ambiguous'
                 continue
 
-            # Find lots from pickings for this job+product
-            lot_qtys = self._get_picking_lot_qtys(m)
+            # Lots from done pickings for this job+product (pre-batched above —
+            # same result the per-material _get_picking_lot_qtys would return).
+            lot_qtys = batched_lot_qtys.get((m.job_id.id, m.product_id.id), {})
 
             if not lot_qtys:
                 # No lot history → mark as historical gap
@@ -127,6 +143,22 @@ class EsfsmLotAllocationMigration(models.AbstractModel):
         return result
 
     @api.model
+    def _flush_before_lot_sql(self):
+        """Flush the ORM caches the raw lot-history SQL below reads directly.
+
+        The queries hit stock_picking.state (a STORED COMPUTED field), so a
+        just-validated picking whose state lives only in the ORM cache must be
+        flushed to its DB column first, or `WHERE sp.state='done'` misses it
+        (Odoo auto-flushes before its OWN ORM reads, but not before a
+        hand-written cr.execute). No-op in the production migration (historical
+        pickings are already persisted); load-bearing right after
+        creating/validating pickings (e.g. in tests).
+        """
+        self.env['stock.picking'].flush_model(['state', 'esfsm_job_id'])
+        self.env['stock.move'].flush_model(['picking_id', 'product_id'])
+        self.env['stock.move.line'].flush_model(['move_id', 'lot_id', 'quantity'])
+
+    @api.model
     def _get_picking_lot_qtys(self, material):
         """Return {lot_id: qty} aggregated from done pickings on this job
         for the material's product. Keyed by (job_id, product_id) — all
@@ -137,6 +169,7 @@ class EsfsmLotAllocationMigration(models.AbstractModel):
         Accepts either a single record or a recordset (uses first)."""
         if hasattr(material, 'ensure_one') and len(material) > 1:
             material = material[:1]
+        self._flush_before_lot_sql()
         self.env.cr.execute("""
             SELECT sml.lot_id, SUM(sml.quantity)
             FROM stock_move_line sml
@@ -150,6 +183,42 @@ class EsfsmLotAllocationMigration(models.AbstractModel):
             GROUP BY sml.lot_id
         """, (material.job_id.id, material.product_id.id))
         return {lot_id: qty for lot_id, qty in self.env.cr.fetchall()}
+
+    @api.model
+    def _batch_picking_lot_qtys(self, job_product_pairs):
+        """Batched form of _get_picking_lot_qtys: aggregate done-picking lot
+        quantities for MANY (job_id, product_id) pairs in ONE grouped query.
+
+        Returns {(job_id, product_id): {lot_id: qty}}. Pairs with no matching
+        picking history are simply absent from the result (callers treat a
+        missing/empty entry as "no lot history" — a historical gap), so the
+        per-pair value is identical to what _get_picking_lot_qtys(material)
+        would return for any material sharing those keys.
+
+        `job_product_pairs` is an iterable of (job_id, product_id) tuples.
+        Returns {} immediately for an empty set (avoids an `IN ()` SQL error).
+        """
+        pairs = tuple({(int(j), int(p)) for j, p in job_product_pairs})
+        if not pairs:
+            return {}
+        self._flush_before_lot_sql()
+        # psycopg2 adapts a tuple-of-tuples for a composite IN, rendering
+        # `(sp.esfsm_job_id, sm.product_id) IN ((j1,p1),(j2,p2),...)`.
+        self.env.cr.execute("""
+            SELECT sp.esfsm_job_id, sm.product_id, sml.lot_id, SUM(sml.quantity)
+            FROM stock_move_line sml
+            JOIN stock_move sm ON sml.move_id = sm.id
+            JOIN stock_picking sp ON sm.picking_id = sp.id
+            WHERE sp.state = 'done'
+              AND sml.lot_id IS NOT NULL
+              AND sml.quantity > 0
+              AND (sp.esfsm_job_id, sm.product_id) IN %s
+            GROUP BY sp.esfsm_job_id, sm.product_id, sml.lot_id
+        """, (pairs,))
+        result = defaultdict(dict)
+        for job_id, product_id, lot_id, qty in self.env.cr.fetchall():
+            result[(job_id, product_id)][lot_id] = qty
+        return dict(result)
 
     # ──────────────────────────────────────────────
     # Dry run + reporting

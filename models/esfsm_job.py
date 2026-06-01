@@ -107,6 +107,20 @@ class EsfsmJob(models.Model):
         for job in self:
             job.material_total = sum(job.material_ids.mapped('price_subtotal'))
 
+    @api.depends('material_ids.price_subtotal')
+    def _compute_costs(self):
+        """Add material lines as a dependency of the job cost compute.
+
+        The cost compute itself lives in esfsm_project (optional). When BOTH
+        esfsm_project and esfsm_stock are installed, this override wires the
+        material price as a real driver so total_cost (and the stored project
+        budget that depends on it) recomputes when a material line changes.
+        The hasattr guard makes this a no-op safe call when esfsm_project is
+        not installed and the base method does not exist.
+        """
+        if hasattr(super(), '_compute_costs'):
+            super()._compute_costs()
+
     def _get_source_location(self):
         """
         Determine source location for materials using the Location Provider.
