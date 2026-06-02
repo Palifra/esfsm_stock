@@ -440,12 +440,24 @@ class StockPickingService(models.AbstractModel):
         if not material_lines:
             return self.env['stock.picking']
 
-        # Get picking type
-        picking_type = self._get_picking_type('Враќање на Реверс', job.company_id.id, 'internal')
+        # Get picking type. eskon_reverse names the return type 'Повратница'
+        # (NOT 'Враќање на Реверс', which was never created — the old lookup
+        # silently fell back to a generic internal type, so every FSM return was
+        # mis-classified as 'Интерни трансфери' instead of 'Повратница').
+        picking_type = self._get_picking_type('Повратница', job.company_id.id, 'internal')
 
         # Get locations
         source_location = job._get_source_location()  # Technician/vehicle location
-        dest_location = picking_type.default_location_dest_id or self.env.ref('stock.stock_location_stock')
+        # Return to the company's warehouse stock — the SAME warehouse реверс
+        # issues from. We resolve it from the warehouse, NOT from
+        # picking_type.default_location_dest_id: there are duplicate per-warehouse
+        # 'Повратница' types and the name lookup (limit=1) can pick the wrong
+        # warehouse's type, which would otherwise redirect returns to the wrong
+        # стоваришен location.
+        warehouse = self.env['stock.warehouse'].search([
+            ('company_id', '=', job.company_id.id)
+        ], limit=1)
+        dest_location = warehouse.lot_stock_id if warehouse else self.env.ref('stock.stock_location_stock')
 
         # Create picking
         picking = self._create_picking_with_moves(

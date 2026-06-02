@@ -457,6 +457,22 @@ class TestReturnMaterialWizard(TestEsfsmStock):
         self.assertEqual(self.material.returned_qty, 4.0)
         self.assertEqual(self.material.available_to_return_qty, 0.0)
 
+        # Guard (esfsm <-> eskon_reverse integration): the return picking must be
+        # typed 'Повратница' and land at the warehouse stock — NOT the generic
+        # 'Интерни трансфери' fallback the old (never-created) 'Враќање на
+        # Реверс' lookup silently produced, which mis-classified every return.
+        ret_picking = self.env['stock.picking'].search(
+            [('origin', 'ilike', 'Повратница')], order='id desc', limit=1)
+        self.assertTrue(ret_picking, "A Повратница picking must be created on return")
+        self.assertEqual(
+            ret_picking.picking_type_id.name, 'Повратница',
+            "Return must use the 'Повратница' picking type, not an internal fallback")
+        warehouse = self.env['stock.warehouse'].search(
+            [('company_id', '=', self.job.company_id.id)], limit=1)
+        self.assertEqual(
+            ret_picking.location_dest_id, warehouse.lot_stock_id,
+            "Return must land at the warehouse stock")
+
     def test_03_wizard_partial_return(self):
         """Test wizard allows partial return"""
         wizard = self.env['esfsm.return.material.wizard'].with_context(
