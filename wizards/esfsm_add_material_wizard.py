@@ -50,18 +50,16 @@ class EsfsmAddMaterialWizard(models.TransientModel):
             else 'Непознат'
         )
 
-        # Find "Реверс" picking type (materials issued to employee)
-        picking_type = self.env['stock.picking.type'].search([
-            ('name', '=', 'Реверс'),
+        # Resolve the "Реверс" picking type (materials issued to employee) by
+        # stable sequence_code, matched to the company's warehouse. Routes
+        # through eskon_reverse's resolver, which raises if missing (no silent
+        # fallback to a generic internal type).
+        warehouse = self.env['stock.warehouse'].search([
             ('company_id', '=', job.company_id.id)
         ], limit=1)
-
-        # Fallback to generic internal if Реверс not found
-        if not picking_type:
-            picking_type = self.env['stock.picking.type'].search([
-                ('code', '=', 'internal'),
-                ('company_id', '=', job.company_id.id)
-            ], limit=1)
+        picking_type = self.env['stock.picking.type']._eskon_reverse_type(
+            'reverse', warehouse, job.company_id,
+        )
 
         # Get source from picking type defaults, destination from job
         source_location = picking_type.default_location_src_id or self.env.ref('stock.stock_location_stock')

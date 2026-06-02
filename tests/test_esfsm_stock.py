@@ -311,15 +311,15 @@ class TestAddMaterialWizard(TestEsfsmStock):
         and seed the same location.
         """
         super().setUp()
-        picking_type = self.env['stock.picking.type'].search([
-            ('name', '=', 'Реверс'),
+        # Mirror the wizard's own resolution (sequence_code 'REV', matched to
+        # the company's warehouse via eskon_reverse's resolver) so we seed the
+        # exact location the availability guard checks.
+        warehouse = self.env['stock.warehouse'].search([
             ('company_id', '=', self.job.company_id.id),
         ], limit=1)
-        if not picking_type:
-            picking_type = self.env['stock.picking.type'].search([
-                ('code', '=', 'internal'),
-                ('company_id', '=', self.job.company_id.id),
-            ], limit=1)
+        picking_type = self.env['stock.picking.type']._eskon_reverse_type(
+            'reverse', warehouse, self.job.company_id,
+        )
         add_source_location = (
             picking_type.default_location_src_id
             or self.env.ref('stock.stock_location_stock')
