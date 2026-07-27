@@ -34,6 +34,12 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
         string='Дестинација (техничар)',
         compute='_compute_locations',
     )
+    has_reverse_bound_lines = fields.Boolean(
+        string='Има реверс-врзани линии',
+        compute='_compute_has_reverse_bound_lines',
+        help='I-2: линиите врзани за реверс-локација се прикажуваат, но не '
+             'се земаат од магацин — овој флег го пали предупредувањето.',
+    )
 
     @api.depends('job_id')
     def _compute_locations(self):
@@ -51,39 +57,11 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
                 wizard.source_location_id = False
                 wizard.dest_location_id = False
 
-    @api.model
-    def _is_reverse_bound_elsewhere(self, material, dest_location):
-        """I3: линија врзана за РЕВЕРС-локација различна од дестинацијата.
-
-        „Превземи" депонира во `job._get_source_location()`. Ако линијата веќе
-        носи `source_location_id` (книжно преземена од Реверс — робата физички
-        стои таму), дополнителен Take во ДРУГА локација би дал ДВА физички
-        извори за ЕДЕН скалар: Consume/Return влечат исклучиво од
-        `source_location_id`, па земеното во возилото останува како невидлив
-        вишок кој ниту се троши ниту се враќа.
-
-        МЕК guard: `source_location_id` постои САМО кога
-        `esfsm_reverse_reconcile` е инсталиран — esfsm_stock мора да работи и
-        без него, затоа проверката оди низ `_fields`, не низ import.
-        """
-        if 'source_location_id' not in material._fields:
-            return False
-        src = material.source_location_id
-        return bool(src) and src != dest_location
-
-    def _check_reverse_bound_lines(self, wizard_lines, dest_location):
-        """Втора порта: линијата може да стигне и покрај `default_get`
-        (програмски создадена wizard линија, стар отворен wizard, RPC)."""
-        for line in wizard_lines:
-            material = line.material_line_id
-            if material and self._is_reverse_bound_elsewhere(
-                    material, dest_location):
-                raise ValidationError(_(
-                    'Линијата %(p)s е врзана за реверс-локација „%(loc)s" — '
-                    'дополнително „Превземи" во друга локација би направило '
-                    'двоен извор. Одврзете или потрошете прво.',
-                    p=material.product_id.display_name,
-                    loc=material.source_location_id.display_name))
+    @api.depends('line_ids.status')
+    def _compute_has_reverse_bound_lines(self):
+        for wizard in self:
+            wizard.has_reverse_bound_lines = bool(
+                wizard.line_ids.filtered(lambda l: l.status == 'reverse_bound'))
 
     @api.model
     def default_get(self, fields_list):
@@ -104,12 +82,14 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
         source_location = warehouse.lot_stock_id if warehouse else False
 
         # Find materials with planned_qty > taken_qty.
-        # I3: реверс-врзаните линии (source_location_id ≠ дестинацијата на
-        # Take-от) се ИСКЛУЧУВААТ — види `_is_reverse_bound_elsewhere`.
+        # I-2: реверс-врзаните линии (source_location_id ≠ дестинацијата на
+        # Take-от) НЕ се исфрлаат тивко — тоа изгледаше како материјал што
+        # мистериозно исчезнал од wizard-от. Прикажани се со статус
+        # `reverse_bound` и take_qty 0 (види `_is_reverse_bound_elsewhere`).
         dest_location = job._get_source_location()
+        picking_service = self.env['esfsm.stock.picking.service']
         materials_to_take = job.material_ids.filtered(
             lambda m: m.planned_qty > m.taken_qty
-            and not self._is_reverse_bound_elsewhere(m, dest_location)
         )
 
         lines = []
@@ -137,7 +117,12 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
                 _logger.info(f"  Product: {material.product_id.name[:30]}, Need: {qty_to_take}, Stock: {available_qty}")
 
             # Determine status
-            if available_qty <= 0:
+            if picking_service.is_reverse_bound_elsewhere(
+                    material, dest_location):
+                # I-2: видлива, но не-землива линија (гејтот е во левакот)
+                status = 'reverse_bound'
+                suggested_qty = 0.0
+            elif available_qty <= 0:
                 status = 'no_stock'
                 suggested_qty = 0.0
             elif available_qty < qty_to_take:
@@ -196,6 +181,8 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
         lines_to_take = self.line_ids.filtered(lambda l: l.take_qty > 0 and l.material_line_id and l.product_id)
         partial_lines = self.line_ids.filtered(lambda l: l.status == 'partial')
         no_stock_lines = self.line_ids.filtered(lambda l: l.status == 'no_stock')
+        reverse_bound_lines = self.line_ids.filtered(
+            lambda l: l.status == 'reverse_bound')
 
         # Build notification messages
         messages = []
@@ -223,8 +210,34 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
 
         # Check if we have anything to take
         if not lines_to_take:
+            # I-2: „Нема материјали на залиха" беше ЛАЖНА дијагноза кога сите
+            # линии се врзани за реверс — магацинот е полн, само робата веќе е
+            # книжно преземена на реверс-локација. Пораката мора да каже зошто.
+            if reverse_bound_lines and not no_stock_lines and not partial_lines:
+                bound_items = '\n'.join(
+                    '  • %s → „%s"' % (
+                        line.product_id.display_name,
+                        line.material_line_id.source_location_id.display_name)
+                    for line in reverse_bound_lines if line.product_id)
+                raise ValidationError(_(
+                    'Нема што да се земе од магацин: %(n)d линии се врзани за '
+                    'реверс (робата веќе е книжно преземена на реверс-'
+                    'локација). Одврзете ги или потрошете ги прво.\n\n'
+                    '%(items)s',
+                    n=len(reverse_bound_lines), items=bound_items))
+
             # Build detailed error message
             error_parts = [_('Нема материјали на залиха за превземање.')]
+
+            if reverse_bound_lines:
+                error_parts.append(_('\n\n⚠️ Врзани за реверс (не се земаат '
+                                     'од магацин):'))
+                for line in reverse_bound_lines:
+                    if line.product_id:
+                        error_parts.append('  • %s → „%s"' % (
+                            line.product_id.display_name,
+                            line.material_line_id.source_location_id
+                            .display_name))
 
             if no_stock_lines:
                 error_parts.append(_('\n\n⚠️ Нема на залиха:'))
@@ -248,8 +261,10 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
 
             raise ValidationError('\n'.join(error_parts))
 
-        # I3: втора порта пред било каков запис/движење
-        self._check_reverse_bound_lines(lines_to_take, job._get_source_location())
+        # I-1: гејтот за реверс-врзани линии НЕ се дуплира тука — живее во
+        # `create_reverse_picking_from_lines` (заедничкиот левак), па важи и за
+        # `apply_take` / API влезовите. Рачно внесена количина врз
+        # `reverse_bound` ред стигнува дотаму пред било каков запис.
 
         # Use StockPickingService to create picking
         picking_service = self.env['esfsm.stock.picking.service']
@@ -348,6 +363,7 @@ class EsfsmTakeMaterialWizardLine(models.TransientModel):
         ('ok', 'Достапно'),
         ('partial', 'Делумно'),
         ('no_stock', 'Нема залиха'),
+        ('reverse_bound', 'Врзано за реверс'),
     ], string='Статус')
 
     @api.constrains('take_qty', 'available_qty', 'qty_to_take')
@@ -356,6 +372,13 @@ class EsfsmTakeMaterialWizardLine(models.TransientModel):
         for line in self:
             if line.take_qty < 0:
                 raise ValidationError(_('Количината не може да биде негативна.'))
+            if line.status == 'reverse_bound' and line.take_qty > 0:
+                # I-2: полето е readonly во приказот, но RPC/увоз не поминува
+                # низ приказот — истата дијагноза, пред левакот.
+                raise ValidationError(_(
+                    'Линијата %(p)s е врзана за реверс — не се зема од '
+                    'магацин. Одврзете или потрошете прво.',
+                    p=line.product_id.display_name))
             if line.take_qty > line.available_qty and line.product_id:
                 raise ValidationError(_(
                     'Количината за превземање (%s) не може да биде поголема од залихата (%s) за %s'
@@ -378,8 +401,8 @@ class EsfsmTakeMaterialWizardLine(models.TransientModel):
 
         job = self.wizard_id.job_id
 
-        # I3: истата порта и на еднолиниската патека
-        self.wizard_id._check_reverse_bound_lines(self, job._get_source_location())
+        # I-1: реверс-гејтот е во левакот (create_reverse_picking_from_lines),
+        # значи важи и овде — без дуплирање.
 
         # Use StockPickingService to create picking for single line
         picking_service = self.env['esfsm.stock.picking.service']

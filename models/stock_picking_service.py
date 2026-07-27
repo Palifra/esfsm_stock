@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # Part of ESFSM Stock. See LICENSE file for full copyright and licensing details.
 
-from odoo import models, fields, _
-from odoo.exceptions import UserError
+from odoo import api, models, fields, _
+from odoo.exceptions import UserError, ValidationError
 from odoo.tools import float_compare, float_is_zero
 
 
@@ -43,6 +43,47 @@ class StockPickingService(models.AbstractModel):
                 'res_id': pickings.id,
             })
         return action
+
+    @api.model
+    def is_reverse_bound_elsewhere(self, material, dest_location):
+        """I3/I-1: линија врзана за РЕВЕРС-локација различна од дестинацијата.
+
+        „Превземи" депонира во `job._get_source_location()`. Ако линијата веќе
+        носи `source_location_id` (книжно преземена од Реверс — робата физички
+        стои таму), дополнителен Реверс во ДРУГА локација би дал ДВА физички
+        извори за ЕДЕН скалар: Consume/Return влечат исклучиво од
+        `source_location_id`, па земеното во возилото останува како невидлив
+        вишок кој ниту се троши ниту се враќа.
+
+        МЕК guard: `source_location_id` постои САМО кога
+        `esfsm_reverse_reconcile` е инсталиран — esfsm_stock мора да работи и
+        без него, затоа проверката оди низ `_fields`, не низ import.
+        """
+        if not material or 'source_location_id' not in material._fields:
+            return False
+        src = material.source_location_id
+        return bool(src) and src != dest_location
+
+    @api.model
+    def _check_reverse_bound_materials(self, materials, dest_location):
+        """Гејт на ЕДИНСТВЕНИОТ левак за Реверс документи.
+
+        I-1: wizard-ите не се единствен влез — `esfsm.job.material.apply_take`
+        го вика и `esfsm_api` (/esfsm/api/v2/materials/usage, инсталиран во
+        прод), значи телефон што пушта `taken_qty` на реверс-врзана линија
+        правеше двоен извор без ниту една порта. Затоа проверката живее во
+        `create_reverse_picking_from_lines` — низ него минуваат wizard
+        confirm, еднолиниската патека И apply_take — а не (само) на
+        wizard-ските влезови.
+        """
+        for material in materials:
+            if self.is_reverse_bound_elsewhere(material, dest_location):
+                raise ValidationError(_(
+                    'Линијата %(p)s е врзана за реверс-локација „%(loc)s" — '
+                    'дополнително „Превземи" во друга локација би направило '
+                    'двоен извор. Одврзете или потрошете прво.',
+                    p=material.product_id.display_name,
+                    loc=material.source_location_id.display_name))
 
     def _get_technician_name(self, job):
         """
@@ -359,6 +400,13 @@ class StockPickingService(models.AbstractModel):
         picking_type = self.env['stock.picking.type']._eskon_reverse_type(
             'reverse', warehouse, job.company_id,
         )
+
+        # I-1: гејт ПРЕД било каков документ/движење — овој метод е левакот
+        # низ кој минуваат сите Реверс влезови (wizard confirm, еднолиниска
+        # патека, `apply_take` → esfsm_api).
+        self._check_reverse_bound_materials(
+            [line.get('material_line_id') for line in material_lines],
+            dest_location)
 
         # Create picking
         picking = self._create_picking_with_moves(

@@ -80,6 +80,12 @@
         <field name="arch" type="xml">
             <form string="Превземи материјали">
                 <sheet>
+                    <field name="has_reverse_bound_lines" invisible="1"/>
+                    <div class="alert alert-warning" role="alert"
+                         invisible="not has_reverse_bound_lines">
+                        <strong>Внимание:</strong> Линии врзани за реверс-локација
+                        не се земаат од магацин — одврзете или потрошете прво.
+                    </div>
                     <group>
                         <group>
                             <field name="job_id" readonly="1"/>
@@ -95,6 +101,7 @@
                                 <list editable="bottom" create="false" delete="false" no_open="1"
                                       decoration-danger="status == 'no_stock'"
                                       decoration-warning="status == 'partial'"
+                                      decoration-muted="status == 'reverse_bound'"
                                       decoration-success="status == 'ok'">
                                     <field name="material_line_id" column_invisible="1" force_save="1"/>
                                     <field name="product_id" readonly="1" force_save="1"/>
@@ -104,8 +111,9 @@
                                     <field name="already_taken_qty" readonly="1" string="Земено" force_save="1"/>
                                     <field name="qty_to_take" readonly="1" string="Потреба" force_save="1"/>
                                     <field name="available_qty" readonly="1" string="Залиха" force_save="1"/>
-                                    <field name="take_qty" string="Земи"/>
-                                    <field name="status" column_invisible="1" force_save="1"/>
+                                    <field name="take_qty" string="Земи"
+                                           readonly="status == 'reverse_bound'"/>
+                                    <field name="status" optional="show" force_save="1"/>
                                 </list>
                             </field>
                         </page>
@@ -114,7 +122,8 @@
                         <strong>Легенда:</strong>
                         <span class="text-success"> ✓ Достапно</span> |
                         <span class="text-warning"> ⚠ Делумно</span> |
-                        <span class="text-danger"> ✗ Нема залиха</span>
+                        <span class="text-danger"> ✗ Нема залиха</span> |
+                        <span class="text-muted"> ⛔ Врзано за реверс</span>
                         <br/>
                         <small>Измени ја колоната "Земи" за секоја линија, потоа кликни "Превземи".</small>
                     </div>
