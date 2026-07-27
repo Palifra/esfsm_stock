@@ -14,6 +14,36 @@ class StockPickingService(models.AbstractModel):
     _name = 'esfsm.stock.picking.service'
     _description = 'ESFSM Stock Picking Service'
 
+    def action_open_pickings(self, pickings):
+        """Акција за резултатот од `create_*_picking` builder-ите.
+
+        Builder-ите можат да вратат ПОВЕЌЕ документи (еден по изворна
+        локација — материјални линии врзани за реверс-локација влечат од
+        таму, останатите од job приоритетот). `res_id` врз мулти-recordset
+        крши со „Expected singleton", затоа:
+          • >1 документ → ЛИСТА акција со domain, БЕЗ `res_id`;
+          • 1 (или 0) → форма како досега.
+        Празен recordset дава `res_id=False` — истото однесување како пред
+        воведувањето на овој хелпер.
+        """
+        action = {
+            'type': 'ir.actions.act_window',
+            'res_model': 'stock.picking',
+            'target': 'current',
+        }
+        if len(pickings) > 1:
+            action.update({
+                'name': _('Креирани документи'),
+                'view_mode': 'list,form',
+                'domain': [('id', 'in', pickings.ids)],
+            })
+        else:
+            action.update({
+                'view_mode': 'form',
+                'res_id': pickings.id,
+            })
+        return action
+
     def _get_technician_name(self, job):
         """
         Get technician name with fallback logic.

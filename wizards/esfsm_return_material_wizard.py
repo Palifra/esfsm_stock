@@ -79,7 +79,10 @@ class EsfsmReturnMaterialWizard(models.TransientModel):
 
         job = self.job_id
         picking_service = self.env['esfsm.stock.picking.service']
-        picking = picking_service.create_return_picking(job, lines_to_return)
+        # W-RETIRE: мешани извори (реверс-reconcile) враќаат ПОВЕЌЕ документи —
+        # акцијата се гради низ `action_open_pickings` (листа vs форма), никогаш
+        # `picking.id` врз мулти-recordset.
+        pickings = picking_service.create_return_picking(job, lines_to_return)
 
         touched_materials = set()
         for line in lines_to_return:
@@ -121,13 +124,7 @@ class EsfsmReturnMaterialWizard(models.TransientModel):
         for mid in touched_materials:
             Material.browse(mid)._validate_allocation_sums()
 
-        return {
-            'type': 'ir.actions.act_window',
-            'res_model': 'stock.picking',
-            'res_id': picking.id,
-            'view_mode': 'form',
-            'target': 'current',
-        }
+        return picking_service.action_open_pickings(pickings)
 
 
 class EsfsmReturnMaterialWizardLine(models.TransientModel):

@@ -52,6 +52,40 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
                 wizard.dest_location_id = False
 
     @api.model
+    def _is_reverse_bound_elsewhere(self, material, dest_location):
+        """I3: линија врзана за РЕВЕРС-локација различна од дестинацијата.
+
+        „Превземи" депонира во `job._get_source_location()`. Ако линијата веќе
+        носи `source_location_id` (книжно преземена од Реверс — робата физички
+        стои таму), дополнителен Take во ДРУГА локација би дал ДВА физички
+        извори за ЕДЕН скалар: Consume/Return влечат исклучиво од
+        `source_location_id`, па земеното во возилото останува како невидлив
+        вишок кој ниту се троши ниту се враќа.
+
+        МЕК guard: `source_location_id` постои САМО кога
+        `esfsm_reverse_reconcile` е инсталиран — esfsm_stock мора да работи и
+        без него, затоа проверката оди низ `_fields`, не низ import.
+        """
+        if 'source_location_id' not in material._fields:
+            return False
+        src = material.source_location_id
+        return bool(src) and src != dest_location
+
+    def _check_reverse_bound_lines(self, wizard_lines, dest_location):
+        """Втора порта: линијата може да стигне и покрај `default_get`
+        (програмски создадена wizard линија, стар отворен wizard, RPC)."""
+        for line in wizard_lines:
+            material = line.material_line_id
+            if material and self._is_reverse_bound_elsewhere(
+                    material, dest_location):
+                raise ValidationError(_(
+                    'Линијата %(p)s е врзана за реверс-локација „%(loc)s" — '
+                    'дополнително „Превземи" во друга локација би направило '
+                    'двоен извор. Одврзете или потрошете прво.',
+                    p=material.product_id.display_name,
+                    loc=material.source_location_id.display_name))
+
+    @api.model
     def default_get(self, fields_list):
         """Pre-populate wizard with materials to take"""
         res = super().default_get(fields_list)
@@ -69,9 +103,13 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
         ], limit=1)
         source_location = warehouse.lot_stock_id if warehouse else False
 
-        # Find materials with planned_qty > taken_qty
+        # Find materials with planned_qty > taken_qty.
+        # I3: реверс-врзаните линии (source_location_id ≠ дестинацијата на
+        # Take-от) се ИСКЛУЧУВААТ — види `_is_reverse_bound_elsewhere`.
+        dest_location = job._get_source_location()
         materials_to_take = job.material_ids.filtered(
             lambda m: m.planned_qty > m.taken_qty
+            and not self._is_reverse_bound_elsewhere(m, dest_location)
         )
 
         lines = []
@@ -210,6 +248,9 @@ class EsfsmTakeMaterialWizard(models.TransientModel):
 
             raise ValidationError('\n'.join(error_parts))
 
+        # I3: втора порта пред било каков запис/движење
+        self._check_reverse_bound_lines(lines_to_take, job._get_source_location())
+
         # Use StockPickingService to create picking
         picking_service = self.env['esfsm.stock.picking.service']
         picking = picking_service.create_reverse_picking(job, lines_to_take)
@@ -336,6 +377,9 @@ class EsfsmTakeMaterialWizardLine(models.TransientModel):
             ) % (self.take_qty, self.available_qty))
 
         job = self.wizard_id.job_id
+
+        # I3: истата порта и на еднолиниската патека
+        self.wizard_id._check_reverse_bound_lines(self, job._get_source_location())
 
         # Use StockPickingService to create picking for single line
         picking_service = self.env['esfsm.stock.picking.service']
