@@ -39,6 +39,15 @@ class EsfsmJobMaterial(models.Model):
         string='Клиент',
         help='Клиент на работата (само за приказ во листата по магацин)',
     )
+    # Stored related: домен низ job_id ги применува правилата за налози, па
+    # магационер без пристап до налозите не би нашол ништо. Копијата на
+    # ставката се пребарува директно.
+    job_name = fields.Char(
+        related='job_id.name', store=True, string='Налог (број)',
+    )
+    job_is_closed = fields.Boolean(
+        related='job_id.stage_id.is_closed', store=True, string='Налогот е затворен',
+    )
     sequence = fields.Integer(
         string='Редослед',
         default=10,

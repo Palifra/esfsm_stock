@@ -113,8 +113,9 @@
             <search string="Материјали">
                 <field name="product_id"/>
                 <field name="job_id"/>
+                <field name="job_name" string="Налог (број)"/>
                 <filter string="Отворени налози" name="open_jobs"
-                        domain="[('job_id.stage_id.is_closed', '=', False)]"/>
+                        domain="[('job_is_closed', '=', False)]"/>
                 <group expand="0" string="Групирај по">
                     <filter string="Производ" name="group_product" context="{'group_by': 'product_id'}"/>
                     <filter string="Работа" name="group_job" context="{'group_by': 'job_id'}"/>

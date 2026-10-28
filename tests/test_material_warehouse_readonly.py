@@ -79,6 +79,22 @@ class TestMaterialWarehouseReadonly(TransactionCase):
         self.assertEqual(values['job_partner_id'][0], self.partner.id)
         self.assertEqual(values['planned_qty'], 5.0)
 
+    def test_open_jobs_filter_and_job_search_work_without_job_access(self):
+        M = self.env['esfsm.job.material'].with_user(self.warehouse_fsm_user)
+        # домен низ job_id би бил филтриран од правилата за налози → 0 резултати
+        self.assertFalse(M.search([('job_id.stage_id.is_closed', '=', False),
+                                   ('product_id', '=', self.product.id)]))
+        # stored копиите на ставката се пребаруваат директно
+        self.assertEqual(M.search([('job_is_closed', '=', False),
+                                   ('product_id', '=', self.product.id)]), self.material)
+        self.assertEqual(M.search([('job_name', 'ilike', 'RO-JOB-001')]), self.material)
+        # промена на фаза на налогот ја ажурира копијата
+        closed = self.env['esfsm.job.stage'].create({'name': 'Затворено РО', 'is_closed': True})
+        self.job.stage_id = closed
+        self.assertTrue(self.material.job_is_closed)
+        self.assertFalse(M.search([('job_is_closed', '=', False),
+                                   ('product_id', '=', self.product.id)]))
+
     def test_warehouse_fsm_user_cannot_see_the_job_itself(self):
         jobs = self.env['esfsm.job'].with_user(self.warehouse_fsm_user).search(
             [('id', '=', self.job.id)])
