@@ -12,3 +12,4 @@ from . import test_allocation_residue
 from . import test_consume_return_drop
 from . import test_apply_methods
 from . import test_write_protection
+from . import test_material_warehouse_readonly

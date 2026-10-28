@@ -34,6 +34,11 @@ class EsfsmJobMaterial(models.Model):
         ondelete='cascade',
         help='Работа за која е овој материјал'
     )
+    job_partner_id = fields.Many2one(
+        related='job_id.partner_id',
+        string='Клиент',
+        help='Клиент на работата (само за приказ во листата по магацин)',
+    )
     sequence = fields.Integer(
         string='Редослед',
         default=10,
@@ -834,6 +839,10 @@ class EsfsmJobMaterial(models.Model):
         break the suite. planned_qty (a planning estimate) stays directly
         editable.
         """
+        # Дозволата се проверува ПРЕД споредните ефекти (chatter на налогот):
+        # read-only корисник (магацин) не смее да остави трага пред AccessError.
+        self.check_access('write')
+
         # Audit log: track quantity changes in job chatter
         quantity_fields = {'taken_qty', 'used_qty', 'returned_qty', 'planned_qty'}
         changed_qty_fields = quantity_fields & set(vals.keys())

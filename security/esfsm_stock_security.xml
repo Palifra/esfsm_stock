@@ -49,4 +49,31 @@
         <field name="domain_force">['|', ('company_id', '=', False), ('company_id', 'in', company_ids)]</field>
     </record>
 
+    <!-- ================================================================
+         Магацин (stock.group_stock_manager) гледа СИТЕ материјали по налог,
+         само за читање — за проверка на залиха (Маја, 2026-10-28).
+         Правилата се ИЛИ по групи, па ова го шири само read; write/create/
+         unlink остануваат под user/manager правилата погоре.
+         ================================================================ -->
+    <record id="esfsm_job_material_rule_stock_manager_read" model="ir.rule">
+        <field name="name">FSM Material: Warehouse manager read-only</field>
+        <field name="model_id" ref="model_esfsm_job_material"/>
+        <field name="groups" eval="[(4, ref('stock.group_stock_manager'))]"/>
+        <field name="domain_force">['|', ('company_id', '=', False), ('company_id', 'in', company_ids)]</field>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="esfsm_job_material_lot_rule_stock_manager_read" model="ir.rule">
+        <field name="name">FSM Material Lot: Warehouse manager read-only</field>
+        <field name="model_id" ref="model_esfsm_job_material_lot"/>
+        <field name="groups" eval="[(4, ref('stock.group_stock_manager'))]"/>
+        <field name="domain_force">['|', ('company_id', '=', False), ('company_id', 'in', company_ids)]</field>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+
 </odoo>
